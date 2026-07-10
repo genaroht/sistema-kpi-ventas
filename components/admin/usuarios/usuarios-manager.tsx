@@ -211,6 +211,11 @@ export function UsuariosManager() {
       setSaving(false);
       return;
     }
+    if (selectedRoleCode === "jefe" && !form.codigo_operativo.trim()) {
+      setMessage("El código operativo es obligatorio para supervisores.");
+      setSaving(false);
+      return;
+    }
     if (selectedRoleCode === "vendedor" && !form.jefe_id) {
       setMessage("Un usuario vendedor debe estar asignado a un supervisor.");
       setSaving(false);
@@ -245,7 +250,26 @@ export function UsuariosManager() {
         .from("usuarios")
         .update(updatePayload)
         .eq("id", editing);
-      setMessage(error ? error.message : "Usuario guardado correctamente.");
+
+      if (!error && selectedRoleCode === "jefe") {
+        const { error: supervisorError } = await supabase.from("supervisores").upsert(
+          {
+            usuario_id: editing,
+            nombre: payload.nombre,
+            codigo_operativo: payload.codigo_operativo,
+            activo: payload.activo,
+          },
+          { onConflict: "usuario_id" },
+        );
+        setMessage(supervisorError ? supervisorError.message : "Usuario y supervisor guardados correctamente.");
+        if (supervisorError) {
+          setSaving(false);
+          return;
+        }
+      } else {
+        setMessage(error ? error.message : "Usuario guardado correctamente.");
+      }
+
       if (!error) {
         setForm(empty);
         setEditing(null);
@@ -274,7 +298,7 @@ export function UsuariosManager() {
       return;
     }
 
-    setMessage("Usuario Auth creado y vendedor vinculado automáticamente.");
+    setMessage(selectedRoleCode === "vendedor" ? "Usuario Auth creado y vendedor vinculado automáticamente." : selectedRoleCode === "jefe" ? "Usuario Auth creado y supervisor registrado correctamente." : "Usuario Auth creado correctamente.");
     setForm(empty);
     setEditing(null);
     setSelectedVendedorId("");
@@ -326,9 +350,7 @@ export function UsuariosManager() {
             {editing ? "Editar usuario" : "Nuevo usuario"}
           </h2>
           <p className="rounded-xl bg-yellow-50 p-3 text-xs font-semibold text-yellow-800">
-            Crea usuarios internos para administradores, supervisores y
-            vendedores. Todos usan email interno @kpibackus.pe. El código
-            operativo se registra por cada supervisor, no por el rol.
+            Crea usuarios internos para administradores y vendedores. Para supervisores usa también la vista Supervisores, donde se registra la tabla operativa. Todos usan email interno @kpibackus.pe.
           </p>
           <div className="space-y-2">
             <Label>Rol</Label>

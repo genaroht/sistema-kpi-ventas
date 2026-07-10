@@ -107,6 +107,22 @@ export async function POST(request: Request) {
     return jsonError("Rol inválido.");
   }
 
+  if (roleData.codigo === "jefe" && !codigoOperativo) {
+    return jsonError("El código operativo es obligatorio para crear supervisores.");
+  }
+
+  if (roleData.codigo === "jefe" && codigoOperativo) {
+    const { data: duplicatedSupervisor } = await admin
+      .from("supervisores")
+      .select("id")
+      .eq("codigo_operativo", codigoOperativo)
+      .maybeSingle();
+
+    if (duplicatedSupervisor) {
+      return jsonError("Ya existe un supervisor con ese código operativo.");
+    }
+  }
+
   let finalJefeId = jefeId;
   if (roleData.codigo === "vendedor") {
     if (!vendedorId) {
@@ -168,6 +184,34 @@ export async function POST(request: Request) {
     await admin.auth.admin.deleteUser(created.user.id).catch(() => undefined);
     return jsonError(
       "No se pudo crear el perfil del usuario. Revisa rol, supervisor y duplicados.",
+    );
+  }
+
+  if (roleData.codigo === "jefe") {
+    const { error: supervisorError } = await admin.from("supervisores").upsert(
+      {
+        usuario_id: created.user.id,
+        nombre,
+        codigo_operativo: codigoOperativo,
+        activo,
+      },
+      { onConflict: "usuario_id" },
+    );
+
+    if (supervisorError) {
+      console.error("Error al crear supervisor operativo", supervisorError);
+      await admin.from("usuarios").delete().eq("id", created.user.id);
+      await admin.auth.admin.deleteUser(created.user.id).catch(() => undefined);
+      return jsonError("No se pudo crear el registro operativo del supervisor.");
+    }
+
+    await admin.from("kpi_grupos").upsert(
+      [
+        { jefe_id: created.user.id, nombre: "Volumen", orden: 1, activo: true },
+        { jefe_id: created.user.id, nombre: "Cobertura", orden: 2, activo: true },
+        { jefe_id: created.user.id, nombre: "Comercial", orden: 3, activo: true },
+      ],
+      { onConflict: "jefe_id,nombre" },
     );
   }
 

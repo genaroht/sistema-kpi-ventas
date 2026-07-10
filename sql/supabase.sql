@@ -1,6 +1,6 @@
 -- Sistema KPI Ventas - Supabase SQL actualizado
--- Roles: administrador, jefe, vendedor
--- Estructura con aislamiento por jefe: cada jefe solo ve sus vendedores, KPI y registros.
+-- Roles: administrador, supervisor(jefe interno), vendedor
+-- Estructura con aislamiento por supervisor: cada supervisor solo ve sus vendedores, KPI y registros.
 -- IMPORTANTE LOCAL: este script reinicia las tablas públicas del sistema.
 
 create extension if not exists pgcrypto;
@@ -24,6 +24,7 @@ drop table if exists public.registros_kpi cascade;
 drop table if exists public.kpi_grupos cascade;
 drop table if exists public.kpis cascade;
 drop table if exists public.vendedores cascade;
+drop table if exists public.supervisores cascade;
 drop table if exists public.usuarios cascade;
 drop table if exists public.roles cascade;
 drop table if exists public.profiles cascade;
@@ -52,6 +53,17 @@ create table public.usuarios (
   activo boolean not null default true,
   created_at timestamp with time zone not null default now(),
   constraint usuarios_usuario_lower check (usuario = lower(usuario))
+);
+
+create table public.supervisores (
+  id uuid primary key default gen_random_uuid(),
+  usuario_id uuid not null unique references public.usuarios(id) on delete cascade,
+  codigo_operativo text not null unique,
+  nombre text not null,
+  activo boolean not null default true,
+  created_at timestamp with time zone not null default now(),
+  constraint supervisores_codigo_not_empty check (length(trim(codigo_operativo)) > 0),
+  constraint supervisores_nombre_not_empty check (length(trim(nombre)) > 0)
 );
 
 create table public.vendedores (
@@ -105,6 +117,8 @@ create table public.registros_kpi (
 
 create index idx_usuarios_rol_id on public.usuarios(rol_id);
 create index idx_usuarios_jefe_id on public.usuarios(jefe_id);
+create index idx_supervisores_usuario_id on public.supervisores(usuario_id);
+create index idx_supervisores_activo_codigo on public.supervisores(activo, codigo_operativo, nombre);
 create index idx_vendedores_usuario_id on public.vendedores(usuario_id);
 create index idx_vendedores_jefe_id on public.vendedores(jefe_id);
 create index idx_vendedores_jefe_visible_tabla on public.vendedores(jefe_id, visible_tabla, activo);
@@ -285,6 +299,7 @@ for each row execute function public.enforce_stage_order();
 
 alter table public.roles enable row level security;
 alter table public.usuarios enable row level security;
+alter table public.supervisores enable row level security;
 alter table public.vendedores enable row level security;
 alter table public.kpis enable row level security;
 alter table public.kpi_grupos enable row level security;
@@ -310,6 +325,24 @@ using (
 
 create policy "usuarios_admin_all"
 on public.usuarios
+for all
+to authenticated
+using (public.is_administrador())
+with check (public.is_administrador());
+
+-- Supervisores operativos
+create policy "supervisores_select_scoped"
+on public.supervisores
+for select
+to authenticated
+using (
+  public.is_administrador()
+  or usuario_id = auth.uid()
+  or public.current_jefe_id() = usuario_id
+);
+
+create policy "supervisores_admin_all"
+on public.supervisores
 for all
 to authenticated
 using (public.is_administrador())
@@ -571,6 +604,12 @@ begin
     codigo_operativo = 'L7',
     activo = true;
 
+  insert into public.supervisores (usuario_id, codigo_operativo, nombre, activo)
+  values (jefe_auth_id, 'L7', 'Julio Taboada', true)
+  on conflict (usuario_id) do update set
+    codigo_operativo = excluded.codigo_operativo,
+    nombre = excluded.nombre,
+    activo = excluded.activo;
 
   insert into public.kpi_grupos (jefe_id, nombre, orden, activo) values
   (jefe_auth_id, 'Volumen', 1, true),

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, Plus, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
-import type { Rol, Usuario, Vendedor } from "@/types/database";
+import type { Rol, Supervisor, Usuario, Vendedor } from "@/types/database";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ import { roleLabelWithCode } from "@/lib/display-labels";
 
 const empty = { nombre: "", zona: "", jefe_id: "", activo: true, visible_tabla: true };
 
-type SupervisorOption = Pick<Usuario, "id" | "nombre" | "usuario" | "email" | "codigo_operativo">;
+type SupervisorOption = Pick<Supervisor, "usuario_id" | "nombre" | "codigo_operativo"> & { usuario?: Pick<Usuario, "id" | "usuario" | "email" | "nombre"> | null; };
 
 type VendedorRow = Vendedor & {
   jefe?: Pick<Usuario, "id" | "usuario" | "email" | "nombre" | "codigo_operativo"> | null;
@@ -44,10 +44,10 @@ export function VendedoresManager() {
 
     if (role === "administrador") {
       const { data: supervisorData } = await supabase
-        .from("usuarios")
-        .select("id,usuario,email,nombre,codigo_operativo,roles!inner(codigo)")
-        .eq("roles.codigo", "jefe")
+        .from("supervisores")
+        .select("usuario_id,nombre,codigo_operativo,usuario:usuarios!supervisores_usuario_id_fkey(id,usuario,email,nombre)")
         .eq("activo", true)
+        .order("codigo_operativo")
         .order("nombre");
       setSupervisores((supervisorData ?? []) as unknown as SupervisorOption[]);
     }
@@ -118,7 +118,7 @@ export function VendedoresManager() {
               <Label>Supervisor responsable</Label>
               <Select value={form.jefe_id} onChange={(e) => setForm({ ...form, jefe_id: e.target.value })}>
                 <option value="">Selecciona supervisor</option>
-                {supervisores.map((supervisor) => <option key={supervisor.id} value={supervisor.id}>{roleLabelWithCode("jefe", supervisor.codigo_operativo)} · {supervisor.nombre ?? supervisor.usuario}</option>)}
+                {supervisores.map((supervisor) => <option key={supervisor.usuario_id} value={supervisor.usuario_id}>{roleLabelWithCode("jefe", supervisor.codigo_operativo)} · {supervisor.nombre ?? supervisor.usuario?.nombre ?? supervisor.usuario?.usuario}</option>)}
               </Select>
             </div>
           ) : null}

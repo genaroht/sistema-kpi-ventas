@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Download, FileSpreadsheet, Home, LineChart, LogOut, Menu, Target, UserCog, Users, X } from "lucide-react";
+import { Download, FileSpreadsheet, Home, LineChart, LogOut, Menu, ShieldCheck, Target, UserCog, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ const baseNav = [
   { href: "/admin/dashboard", label: "Dashboard", icon: Home, adminOnly: false },
   { href: "/admin/tabla", label: "Tabla Excel", icon: FileSpreadsheet, adminOnly: false },
   { href: "/admin/avance", label: "Avance %", icon: LineChart, adminOnly: false },
+  { href: "/admin/supervisores", label: "Supervisores", icon: ShieldCheck, adminOnly: true },
   { href: "/admin/vendedores", label: "Vendedores", icon: Users, adminOnly: false },
   { href: "/admin/kpis", label: "KPI", icon: Target, adminOnly: false },
   { href: "/admin/reportes", label: "Reportes", icon: LineChart, adminOnly: false },

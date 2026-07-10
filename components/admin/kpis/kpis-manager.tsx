@@ -9,6 +9,7 @@ import type {
   KpiGrupoRow,
   KpiTipo,
   Rol,
+  Supervisor,
   Usuario,
 } from "@/types/database";
 import { Button } from "@/components/ui/button";
@@ -31,10 +32,9 @@ const empty = {
   jefe_id: "",
 };
 
-type SupervisorOption = Pick<
-  Usuario,
-  "id" | "nombre" | "usuario" | "email" | "codigo_operativo"
->;
+type SupervisorOption = Pick<Supervisor, "usuario_id" | "nombre" | "codigo_operativo"> & {
+  usuario?: Pick<Usuario, "id" | "usuario" | "email" | "nombre"> | null;
+};
 type KpiRow = Kpi & {
   jefe?: Pick<
     Usuario,
@@ -97,10 +97,10 @@ export function KpisManager() {
 
     if (role === "administrador") {
       const { data: supervisorData } = await supabase
-        .from("usuarios")
-        .select("id,usuario,email,nombre,codigo_operativo,roles!inner(codigo)")
-        .eq("roles.codigo", "jefe")
+        .from("supervisores")
+        .select("usuario_id,nombre,codigo_operativo,usuario:usuarios!supervisores_usuario_id_fkey(id,usuario,email,nombre)")
         .eq("activo", true)
+        .order("codigo_operativo")
         .order("nombre");
       setSupervisores((supervisorData ?? []) as unknown as SupervisorOption[]);
     }
@@ -316,9 +316,9 @@ export function KpisManager() {
               >
                 <option value="">Selecciona supervisor</option>
                 {supervisores.map((supervisor) => (
-                  <option key={supervisor.id} value={supervisor.id}>
+                  <option key={supervisor.usuario_id} value={supervisor.usuario_id}>
                     {roleLabelWithCode("jefe", supervisor.codigo_operativo)} ·{" "}
-                    {supervisor.nombre ?? supervisor.usuario}
+                    {supervisor.nombre ?? supervisor.usuario?.nombre ?? supervisor.usuario?.usuario}
                   </option>
                 ))}
               </Select>

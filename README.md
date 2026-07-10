@@ -258,3 +258,34 @@ Esta actualización no requiere nuevas columnas ni tablas si ya ejecutaste las m
 - Se agregó la migración opcional `sql/2026-07-10-email-interno-kpibackus.sql` para normalizar el email visible en `public.usuarios` si tenías datos antiguos con otro dominio.
 
 Si ya existen usuarios en Supabase Auth con otro dominio, cambia también el email de autenticación desde Supabase Authentication o recrea esos usuarios, porque la migración solo actualiza `public.usuarios.email`.
+
+## Actualización v7 - Supervisores operativos
+
+- Se agregó la vista `/admin/supervisores` solo para administrador.
+- El administrador puede crear, editar, activar y desactivar supervisores desde una vista separada.
+- Al crear un supervisor se registra en tres lugares de forma automática:
+  - Supabase Auth, para permitir login.
+  - `public.usuarios`, para permisos y rol interno `jefe`/Supervisor.
+  - `public.supervisores`, para manejar código operativo, nombre y estado como tabla operativa independiente.
+- El código operativo ya no depende del rol: queda registrado por cada supervisor en `public.supervisores` y se sincroniza con `public.usuarios.codigo_operativo` para compatibilidad visual.
+- Al crear supervisor se generan por defecto los grupos KPI `Volumen`, `Cobertura` y `Comercial` para ese supervisor.
+- Las vistas de Vendedores y KPI cargan la lista de supervisores desde `public.supervisores`.
+
+### Migración obligatoria para v7
+
+Ejecuta en Supabase SQL Editor:
+
+```sql
+-- Archivo incluido:
+-- sql/2026-07-10-supervisores-operativos.sql
+```
+
+Esta migración crea `public.supervisores`, migra los supervisores existentes desde `public.usuarios`, activa RLS y agrega políticas para administrador.
+
+### Después de aplicar v7
+
+1. Entra como administrador.
+2. Abre `/admin/supervisores`.
+3. Crea un supervisor con usuario, email interno `@kpibackus.pe`, nombre, código operativo y contraseña inicial.
+4. Luego asigna vendedores desde `/admin/vendedores`.
+5. Luego crea grupos/KPI desde `/admin/kpis`.

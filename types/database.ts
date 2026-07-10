@@ -28,6 +28,16 @@ export type Profile = Usuario & {
   rol: Rol;
 };
 
+export type Supervisor = {
+  id: string;
+  usuario_id: string;
+  codigo_operativo: string;
+  nombre: string;
+  activo: boolean;
+  created_at: string;
+  usuario?: Pick<Usuario, "id" | "usuario" | "email" | "nombre" | "activo"> | null;
+};
+
 export type Vendedor = {
   id: string;
   usuario_id: string | null;
