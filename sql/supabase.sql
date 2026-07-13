@@ -1,5 +1,5 @@
 -- Sistema KPI Ventas - Supabase SQL actualizado
--- Roles: administrador, supervisor(jefe interno), vendedor
+-- Roles: administrador, gerente de solo lectura, supervisor(jefe interno), vendedor
 -- Estructura con aislamiento por supervisor: cada supervisor solo ve sus vendedores, KPI y registros.
 -- IMPORTANTE LOCAL: este script reinicia las tablas públicas del sistema.
 
@@ -11,12 +11,15 @@ drop trigger if exists trg_registros_stage_order on public.registros_kpi;
 drop function if exists public.handle_new_user() cascade;
 drop function if exists public.current_user_role() cascade;
 drop function if exists public.is_administrador() cascade;
+drop function if exists public.is_gerente() cascade;
 drop function if exists public.is_jefe() cascade;
 drop function if exists public.current_jefe_id() cascade;
 drop function if exists public.current_vendedor_id() cascade;
 drop function if exists public.enforce_stage_order() cascade;
 drop function if exists public.get_login_email(text) cascade;
 drop function if exists public.setup_admin(text,text,text) cascade;
+drop function if exists public.setup_gerente(text,text,text) cascade;
+drop function if exists public.setup_supervisor_operativo(text,text,text,text) cascade;
 drop function if exists public.setup_jefe_julio(text,text) cascade;
 drop function if exists public.setup_vendedor_demo(text,text,text,text,text) cascade;
 
@@ -25,13 +28,14 @@ drop table if exists public.kpi_grupos cascade;
 drop table if exists public.kpis cascade;
 drop table if exists public.vendedores cascade;
 drop table if exists public.supervisores cascade;
+drop table if exists public.gerentes cascade;
 drop table if exists public.usuarios cascade;
 drop table if exists public.roles cascade;
 drop table if exists public.profiles cascade;
 
 create table public.roles (
   id uuid primary key default gen_random_uuid(),
-  codigo text not null unique check (codigo in ('administrador', 'jefe', 'vendedor')),
+  codigo text not null unique check (codigo in ('administrador', 'gerente', 'jefe', 'vendedor')),
   nombre text not null,
   codigo_operativo text,
   created_at timestamp with time zone not null default now()
@@ -39,6 +43,7 @@ create table public.roles (
 
 insert into public.roles (codigo, nombre, codigo_operativo) values
 ('administrador', 'Administrador', null),
+('gerente', 'Gerente', null),
 ('jefe', 'Supervisor', null),
 ('vendedor', 'Vendedor', null);
 
@@ -64,6 +69,15 @@ create table public.supervisores (
   created_at timestamp with time zone not null default now(),
   constraint supervisores_codigo_not_empty check (length(trim(codigo_operativo)) > 0),
   constraint supervisores_nombre_not_empty check (length(trim(nombre)) > 0)
+);
+
+create table public.gerentes (
+  id uuid primary key default gen_random_uuid(),
+  usuario_id uuid not null unique references public.usuarios(id) on delete cascade,
+  nombre text not null,
+  activo boolean not null default true,
+  created_at timestamp with time zone not null default now(),
+  constraint gerentes_nombre_not_empty check (length(trim(nombre)) > 0)
 );
 
 create table public.vendedores (
@@ -119,6 +133,8 @@ create index idx_usuarios_rol_id on public.usuarios(rol_id);
 create index idx_usuarios_jefe_id on public.usuarios(jefe_id);
 create index idx_supervisores_usuario_id on public.supervisores(usuario_id);
 create index idx_supervisores_activo_codigo on public.supervisores(activo, codigo_operativo, nombre);
+create index idx_gerentes_usuario_id on public.gerentes(usuario_id);
+create index idx_gerentes_activo_nombre on public.gerentes(activo, nombre);
 create index idx_vendedores_usuario_id on public.vendedores(usuario_id);
 create index idx_vendedores_jefe_id on public.vendedores(jefe_id);
 create index idx_vendedores_jefe_visible_tabla on public.vendedores(jefe_id, visible_tabla, activo);
@@ -204,6 +220,16 @@ as $$
   select coalesce(public.current_user_role() = 'jefe', false);
 $$;
 
+create or replace function public.is_gerente()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(public.current_user_role() = 'gerente', false);
+$$;
+
 create or replace function public.current_jefe_id()
 returns uuid
 language sql
@@ -252,6 +278,7 @@ $$;
 
 grant execute on function public.get_login_email(text) to anon, authenticated;
 grant execute on function public.current_user_role() to authenticated;
+grant execute on function public.is_gerente() to authenticated;
 grant execute on function public.current_jefe_id() to authenticated;
 grant execute on function public.current_vendedor_id() to authenticated;
 
@@ -300,10 +327,13 @@ for each row execute function public.enforce_stage_order();
 alter table public.roles enable row level security;
 alter table public.usuarios enable row level security;
 alter table public.supervisores enable row level security;
+alter table public.gerentes enable row level security;
 alter table public.vendedores enable row level security;
 alter table public.kpis enable row level security;
 alter table public.kpi_grupos enable row level security;
 alter table public.registros_kpi enable row level security;
+
+grant select, insert, update, delete on public.gerentes to authenticated;
 
 -- Roles
 create policy "roles_select_authenticated"
@@ -320,6 +350,7 @@ to authenticated
 using (
   id = auth.uid()
   or public.is_administrador()
+  or public.is_gerente()
   or (public.is_jefe() and jefe_id = auth.uid())
 );
 
@@ -337,12 +368,30 @@ for select
 to authenticated
 using (
   public.is_administrador()
+  or public.is_gerente()
   or usuario_id = auth.uid()
   or public.current_jefe_id() = usuario_id
 );
 
 create policy "supervisores_admin_all"
 on public.supervisores
+for all
+to authenticated
+using (public.is_administrador())
+with check (public.is_administrador());
+
+-- Gerentes operativos
+create policy "gerentes_select_scoped"
+on public.gerentes
+for select
+to authenticated
+using (
+  public.is_administrador()
+  or usuario_id = auth.uid()
+);
+
+create policy "gerentes_admin_all"
+on public.gerentes
 for all
 to authenticated
 using (public.is_administrador())
@@ -355,6 +404,7 @@ for select
 to authenticated
 using (
   public.is_administrador()
+  or public.is_gerente()
   or jefe_id = public.current_jefe_id()
   or usuario_id = auth.uid()
 );
@@ -394,7 +444,14 @@ for select
 to authenticated
 using (
   public.is_administrador()
-  or jefe_id = public.current_jefe_id()
+  or public.is_gerente()
+  or (public.is_jefe() and jefe_id = auth.uid())
+  or (
+    public.current_user_role() = 'vendedor'
+    and jefe_id = public.current_jefe_id()
+    and activo = true
+    and visible_tabla = true
+  )
 );
 
 create policy "kpis_insert_jefe_or_admin"
@@ -433,6 +490,7 @@ for select
 to authenticated
 using (
   public.is_administrador()
+  or public.is_gerente()
   or jefe_id = public.current_jefe_id()
 );
 
@@ -471,6 +529,7 @@ for select
 to authenticated
 using (
   public.is_administrador()
+  or public.is_gerente()
   or exists (
     select 1 from public.vendedores v
     where v.id = vendedor_id
@@ -499,6 +558,7 @@ with check (
         select 1 from public.kpis k
         where k.id = kpi_id
           and k.activo = true
+          and k.visible_tabla = true
           and k.jefe_id = public.current_jefe_id()
       )
     )
@@ -572,6 +632,100 @@ begin
     rol_id = excluded.rol_id,
     jefe_id = null,
     codigo_operativo = null,
+    activo = true;
+end;
+$$;
+
+create or replace function public.setup_gerente(
+  p_email text,
+  p_usuario text,
+  p_nombre text default 'Gerente Comercial'
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  auth_id uuid;
+  gerente_role_id uuid;
+begin
+  select id into auth_id from auth.users where lower(email) = lower(p_email) limit 1;
+  if auth_id is null then
+    raise exception 'Primero crea el usuario % en Authentication > Users', p_email;
+  end if;
+
+  select id into gerente_role_id from public.roles where codigo = 'gerente';
+
+  insert into public.usuarios (id, usuario, email, nombre, rol_id, jefe_id, codigo_operativo, activo)
+  values (auth_id, lower(trim(p_usuario)), lower(trim(p_email)), trim(p_nombre), gerente_role_id, null, null, true)
+  on conflict (id) do update set
+    usuario = excluded.usuario,
+    email = excluded.email,
+    nombre = excluded.nombre,
+    rol_id = excluded.rol_id,
+    jefe_id = null,
+    codigo_operativo = null,
+    activo = true;
+
+  insert into public.gerentes (usuario_id, nombre, activo)
+  values (auth_id, trim(p_nombre), true)
+  on conflict (usuario_id) do update set
+    nombre = excluded.nombre,
+    activo = excluded.activo;
+end;
+$$;
+
+create or replace function public.setup_supervisor_operativo(
+  p_email text,
+  p_usuario text,
+  p_nombre text,
+  p_codigo_operativo text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  auth_id uuid;
+  jefe_role_id uuid;
+  v_codigo_operativo text := upper(trim(p_codigo_operativo));
+begin
+  select id into auth_id from auth.users where lower(email) = lower(p_email) limit 1;
+  if auth_id is null then
+    raise exception 'Primero crea el usuario % en Authentication > Users', p_email;
+  end if;
+
+  select r.id into jefe_role_id
+  from public.roles as r
+  where r.codigo = 'jefe'
+  limit 1;
+
+  insert into public.usuarios (id, usuario, email, nombre, rol_id, jefe_id, codigo_operativo, activo)
+  values (auth_id, lower(trim(p_usuario)), lower(trim(p_email)), trim(p_nombre), jefe_role_id, null, v_codigo_operativo, true)
+  on conflict (id) do update set
+    usuario = excluded.usuario,
+    email = excluded.email,
+    nombre = excluded.nombre,
+    rol_id = excluded.rol_id,
+    jefe_id = null,
+    codigo_operativo = excluded.codigo_operativo,
+    activo = true;
+
+  insert into public.supervisores (usuario_id, codigo_operativo, nombre, activo)
+  values (auth_id, v_codigo_operativo, trim(p_nombre), true)
+  on conflict (usuario_id) do update set
+    codigo_operativo = excluded.codigo_operativo,
+    nombre = excluded.nombre,
+    activo = true;
+
+  insert into public.kpi_grupos (jefe_id, nombre, orden, activo) values
+  (auth_id, 'Volumen', 1, true),
+  (auth_id, 'Cobertura', 2, true),
+  (auth_id, 'Comercial', 3, true)
+  on conflict (jefe_id, nombre) do update set
+    orden = excluded.orden,
     activo = true;
 end;
 $$;
@@ -713,19 +867,31 @@ $$;
 
 -- Seguridad producción: estas funciones son de instalación manual. No deben estar disponibles para usuarios autenticados.
 revoke execute on function public.setup_admin(text,text,text) from public, anon, authenticated;
+revoke execute on function public.setup_gerente(text,text,text) from public, anon, authenticated;
+revoke execute on function public.setup_supervisor_operativo(text,text,text,text) from public, anon, authenticated;
 revoke execute on function public.setup_jefe_julio(text,text) from public, anon, authenticated;
 revoke execute on function public.setup_vendedor_demo(text,text,text,text,text) from public, anon, authenticated;
 
 -- PASOS DESPUÉS DE EJECUTAR ESTE SCRIPT:
 -- 1) En Authentication > Users crea:
 --    admin01@kpibackus.pe / admin01
+--    gerente@kpibackus.pe / contraseña segura
 --    jtaboada@kpibackus.pe / jtaboada
+--    rluna@kpibackus.pe / contraseña segura
+--    ahuertas@kpibackus.pe / contraseña segura
 --    dcotrina@kpibackus.pe / dcotrina  (opcional para probar vendedor)
 -- 2) En SQL Editor ejecuta:
 --    select public.setup_admin('admin01@kpibackus.pe', 'admin01', 'Administrador');
+--    select public.setup_gerente('gerente@kpibackus.pe', 'gerente', 'Gerente Comercial');
 --    select public.setup_jefe_julio('jtaboada@kpibackus.pe', 'jtaboada');
+--    select public.setup_supervisor_operativo('rluna@kpibackus.pe', 'rluna', 'Roberto Luna', 'RL');
+--    select public.setup_supervisor_operativo('ahuertas@kpibackus.pe', 'ahuertas', 'Anthony Huertas', 'RF');
 --    select public.setup_vendedor_demo('dcotrina@kpibackus.pe', 'dcotrina', 'Dery Cotrina', 'jtaboada@kpibackus.pe', 'PEMB12');
 -- 3) Login por usuario:
 --    admin01 / admin01
 --    jtaboada / jtaboada
 --    dcotrina / dcotrina
+
+
+comment on table public.gerentes is 'Registro operativo independiente de usuarios con rol gerente.';
+comment on column public.kpis.visible_tabla is 'Controla si el KPI es visible para el vendedor, Tabla Excel, reportes y gráficos.';

@@ -1,11 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { KeyRound, Plus, Save, Search } from "lucide-react";
-import { createClient } from "@/lib/supabase/browser";
+import { createPortal } from "react-dom";
+import {
+  Check,
+  Clipboard,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Search,
+  X,
+} from "lucide-react";
 import type { Role, Usuario, Vendedor } from "@/types/database";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -74,7 +88,6 @@ function userFromName(name: string) {
 }
 
 export function UsuariosManager() {
-  const supabase = createClient();
   const [usuarios, setUsuarios] = useState<UsuarioRow[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [vendedores, setVendedores] = useState<VendedorOption[]>([]);
@@ -82,38 +95,53 @@ export function UsuariosManager() {
   const [editing, setEditing] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [passwordTarget, setPasswordTarget] = useState<UsuarioRow | null>(null);
+  const [resetTarget, setResetTarget] = useState<UsuarioRow | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [temporaryCredential, setTemporaryCredential] = useState<{
+    usuario: string;
+    password: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedVendedorId, setSelectedVendedorId] = useState("");
   const [vendorSearch, setVendorSearch] = useState("");
+  const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [uRes, rRes, vRes] = await Promise.all([
-      supabase
-        .from("usuarios")
-        .select(
-          "id,usuario,email,nombre,rol_id,jefe_id,codigo_operativo,activo,created_at,roles(codigo,nombre),jefe:usuarios!usuarios_jefe_id_fkey(id,usuario,email,nombre,codigo_operativo)",
-        )
-        .order("nombre"),
-      supabase
-        .from("roles")
-        .select("id,codigo,nombre,codigo_operativo,created_at")
-        .order("nombre"),
-      supabase
-        .from("vendedores")
-        .select(
-          "id,nombre,zona,jefe_id,usuario_id,activo,jefe:usuarios!vendedores_jefe_id_fkey(id,usuario,nombre,codigo_operativo)",
-        )
-        .order("zona")
-        .order("nombre"),
-    ]);
-    setUsuarios((uRes.data ?? []) as unknown as UsuarioRow[]);
-    setRoles((rRes.data ?? []) as Role[]);
-    setVendedores((vRes.data ?? []) as unknown as VendedorOption[]);
+    setLoading(true);
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setUsuarios([]);
+        setRoles([]);
+        setVendedores([]);
+        setMessage(data.error ?? "No se pudo cargar la lista de usuarios.");
+        return;
+      }
+
+      setUsuarios((data.usuarios ?? []) as UsuarioRow[]);
+      setRoles((data.roles ?? []) as Role[]);
+      setVendedores((data.vendedores ?? []) as VendedorOption[]);
+    } catch {
+      setUsuarios([]);
+      setRoles([]);
+      setVendedores([]);
+      setMessage("No se pudo conectar con el servicio de administración de usuarios.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
   const jefes = useMemo(
@@ -245,36 +273,25 @@ export function UsuariosManager() {
     };
 
     if (editing) {
-      const { vendedor_id: _vendedorId, ...updatePayload } = payload;
-      const { error } = await supabase
-        .from("usuarios")
-        .update(updatePayload)
-        .eq("id", editing);
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, id: editing }),
+      });
+      const data = await response.json().catch(() => ({}));
 
-      if (!error && selectedRoleCode === "jefe") {
-        const { error: supervisorError } = await supabase.from("supervisores").upsert(
-          {
-            usuario_id: editing,
-            nombre: payload.nombre,
-            codigo_operativo: payload.codigo_operativo,
-            activo: payload.activo,
-          },
-          { onConflict: "usuario_id" },
-        );
-        setMessage(supervisorError ? supervisorError.message : "Usuario y supervisor guardados correctamente.");
-        if (supervisorError) {
-          setSaving(false);
-          return;
-        }
-      } else {
-        setMessage(error ? error.message : "Usuario guardado correctamente.");
+      if (!response.ok) {
+        setMessage(data.error ?? "No se pudo editar el usuario.");
+        setSaving(false);
+        return;
       }
 
-      if (!error) {
-        setForm(empty);
-        setEditing(null);
-        load();
-      }
+      setMessage("Usuario actualizado correctamente en Auth y en la base de datos.");
+      setForm(empty);
+      setEditing(null);
+      setSelectedVendedorId("");
+      setVendorSearch("");
+      await load();
       setSaving(false);
       return;
     }
@@ -298,7 +315,15 @@ export function UsuariosManager() {
       return;
     }
 
-    setMessage(selectedRoleCode === "vendedor" ? "Usuario Auth creado y vendedor vinculado automáticamente." : selectedRoleCode === "jefe" ? "Usuario Auth creado y supervisor registrado correctamente." : "Usuario Auth creado correctamente.");
+    setMessage(
+      selectedRoleCode === "vendedor"
+        ? "Usuario Auth creado y vendedor vinculado automáticamente."
+        : selectedRoleCode === "jefe"
+          ? "Usuario Auth creado y supervisor registrado correctamente."
+          : selectedRoleCode === "gerente"
+            ? "Usuario Auth creado y registrado en la tabla Gerentes."
+            : "Usuario Auth creado correctamente.",
+    );
     setForm(empty);
     setEditing(null);
     setSelectedVendedorId("");
@@ -308,49 +333,157 @@ export function UsuariosManager() {
   }
 
   async function toggle(item: UsuarioRow) {
-    await supabase
-      .from("usuarios")
-      .update({ activo: !item.activo })
-      .eq("id", item.id);
-    load();
-  }
-
-  async function resetPassword() {
-    if (!passwordTarget || !newPassword.trim()) {
-      setMessage("Selecciona un usuario e ingresa la nueva contraseña.");
-      return;
-    }
+    const nextActive = !item.activo;
     setSaving(true);
-    const response = await fetch("/api/admin/users/password", {
-      method: "POST",
+    const response = await fetch("/api/admin/users", {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_id: passwordTarget.id,
-        password: newPassword.trim(),
+        id: item.id,
+        usuario: item.usuario,
+        email: item.email,
+        nombre: item.nombre,
+        rol_id: item.rol_id,
+        jefe_id: item.jefe_id,
+        codigo_operativo: item.codigo_operativo,
+        activo: nextActive,
       }),
     });
     const data = await response.json().catch(() => ({}));
-    setMessage(
-      response.ok
-        ? `Contraseña actualizada para ${passwordTarget.usuario}.`
-        : (data.error ?? "No se pudo cambiar la contraseña."),
-    );
-    if (response.ok) {
-      setPasswordTarget(null);
-      setNewPassword("");
+
+    if (!response.ok) {
+      setMessage(data.error ?? "No se pudo cambiar el estado del usuario.");
+      setSaving(false);
+      return;
     }
+
+    setMessage(nextActive ? "Usuario activado." : "Usuario desactivado.");
+    await load();
     setSaving(false);
   }
 
+  function openChangePassword(item: UsuarioRow) {
+    setPasswordTarget(item);
+    setNewPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+    setPasswordError("");
+    setMessage("");
+  }
+
+  async function changePassword() {
+    if (!passwordTarget) return;
+
+    setPasswordError("");
+
+    if (!newPassword.trim()) {
+      setPasswordError("Ingresa la nueva contraseña.");
+      return;
+    }
+
+    if (newPassword.trim().length < 8) {
+      setPasswordError("La nueva contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
+
+    if (newPassword.trim() !== confirmPassword.trim()) {
+      setPasswordError("La confirmación de la contraseña no coincide.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response = await fetch("/api/admin/users/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: passwordTarget.id,
+          action: "change",
+          password: newPassword.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setPasswordError(data.error ?? "No se pudo cambiar la contraseña.");
+        return;
+      }
+
+      setMessage(`Contraseña actualizada para ${passwordTarget.usuario}.`);
+      setPasswordTarget(null);
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowPassword(false);
+      setPasswordError("");
+    } catch {
+      setPasswordError(
+        "No se pudo conectar con el servicio de contraseñas. Revisa la terminal del servidor.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetPassword() {
+    if (!resetTarget) return;
+
+    const target = resetTarget;
+    setSaving(true);
+
+    try {
+      const response = await fetch("/api/admin/users/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: target.id,
+          action: "reset",
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.temporary_password) {
+        setMessage(data.error ?? "No se pudo restablecer la contraseña.");
+        return;
+      }
+
+      setResetTarget(null);
+      setTemporaryCredential({
+        usuario: target.usuario,
+        password: String(data.temporary_password),
+      });
+      setCopied(false);
+      setMessage(
+        `Clave restablecida para ${target.usuario}. La nueva clave es igual al usuario.`,
+      );
+    } catch {
+      setMessage(
+        "No se pudo conectar con el servicio de contraseñas. Revisa la terminal del servidor.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function copyTemporaryPassword() {
+    if (!temporaryCredential) return;
+    try {
+      await navigator.clipboard.writeText(temporaryCredential.password);
+      setCopied(true);
+    } catch {
+      setMessage("No se pudo copiar automáticamente. Selecciona la clave y cópiala manualmente.");
+    }
+  }
+
   return (
-    <div className="grid gap-5 xl:grid-cols-[460px_1fr]">
+    <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(360px,460px)_minmax(0,1fr)]">
       <Card>
         <CardContent className="space-y-4 pt-5">
           <h2 className="text-lg font-black">
             {editing ? "Editar usuario" : "Nuevo usuario"}
           </h2>
           <p className="rounded-xl bg-yellow-50 p-3 text-xs font-semibold text-yellow-800">
-            Crea usuarios internos para administradores y vendedores. Para supervisores usa también la vista Supervisores, donde se registra la tabla operativa. Todos usan email interno @kpibackus.pe.
+            Crea administradores, gerentes, supervisores y vendedores. Los gerentes se registran automáticamente en la tabla Gerentes y tienen acceso de solo lectura. Todos usan email interno @kpibackus.pe.
           </p>
           <div className="space-y-2">
             <Label>Rol</Label>
@@ -366,6 +499,13 @@ export function UsuariosManager() {
               ))}
             </Select>
           </div>
+          {selectedRoleCode === "gerente" ? (
+            <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold text-blue-800">
+              El gerente podrá consultar los reportes de todos los supervisores,
+              pero no podrá crear, editar, ocultar ni eliminar información. Su
+              registro operativo se guardará en public.gerentes.
+            </p>
+          ) : null}
           {selectedRoleCode === "vendedor" && !editing ? (
             <div className="space-y-2 rounded-2xl border bg-blue-50/60 p-3">
               <Label>Buscar vendedor existente</Label>
@@ -418,7 +558,6 @@ export function UsuariosManager() {
             <Input
               value={form.usuario}
               onChange={(e) => updateUsuario(e.target.value)}
-              disabled={!!editing}
             />
           </div>
           <div className="space-y-2">
@@ -522,111 +661,372 @@ export function UsuariosManager() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="kpi-scrollbar overflow-auto pt-5">
-          <table className="w-full min-w-[1050px] text-sm">
-            <thead>
-              <tr className="border-b bg-slate-50">
-                <th className="p-3 text-left">Usuario</th>
-                <th className="p-3 text-left">Nombre</th>
-                <th className="p-3 text-left">Email interno</th>
-                <th className="p-3 text-left">Rol</th>
-                <th className="p-3 text-left">Supervisor</th>
-                <th className="p-3 text-left">Estado</th>
-                <th className="p-3 text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {usuarios.map((item) => (
-                <tr key={item.id} className="border-b">
-                  <td className="p-3 font-bold">{item.usuario}</td>
-                  <td className="p-3">{item.nombre}</td>
-                  <td className="p-3 text-slate-600">{item.email}</td>
-                  <td className="p-3">
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">
-                      {roleLabelWithCode(
-                        item.roles?.codigo,
-                        item.codigo_operativo,
-                      )}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    {item.jefe
-                      ? roleLabelWithCode("jefe", item.jefe.codigo_operativo) +
-                        " · " +
-                        (item.jefe.nombre ?? item.jefe.usuario)
-                      : "-"}
-                  </td>
-                  <td className="p-3">
-                    <span
-                      className={`rounded-full px-2 py-1 text-xs font-bold ${item.activo ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}
-                    >
-                      {item.activo ? "Activo" : "Inactivo"}
-                    </span>
-                  </td>
-                  <td className="space-x-2 p-3 text-right">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => edit(item)}
-                    >
-                      Editar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => toggle(item)}
-                    >
-                      {item.activo ? "Desactivar" : "Activar"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setPasswordTarget(item);
-                        setNewPassword(item.usuario);
-                      }}
-                    >
-                      <KeyRound className="h-4 w-4" /> Clave
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {passwordTarget ? (
-            <div className="mt-5 rounded-2xl border bg-slate-50 p-4">
-              <h3 className="font-black">
-                Restablecer clave de {passwordTarget.usuario}
-              </h3>
-              <p className="mt-1 text-xs font-semibold text-slate-500">
-                Solo el administrador puede hacer este cambio.
+      <Card className="min-w-0 overflow-hidden">
+        <CardContent className="min-w-0 pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black">Usuarios registrados</h2>
+              <p className="text-xs font-semibold text-slate-500">
+                Edita datos, rol, estado o contraseña. Los cambios de email y
+                nombre también se sincronizan con Supabase Auth.
               </p>
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                <Input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Nueva contraseña"
-                  className="sm:max-w-xs"
-                />
-                <Button onClick={resetPassword} disabled={saving}>
-                  Actualizar clave
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setPasswordTarget(null);
-                    setNewPassword("");
-                  }}
-                >
-                  Cancelar
-                </Button>
-              </div>
             </div>
-          ) : null}
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                {usuarios.length} usuarios
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void load()}
+                disabled={loading || saving}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                />
+                Actualizar
+              </Button>
+            </div>
+          </div>
+
+          <div className="kpi-scrollbar mt-4 w-full min-w-0 max-w-full overflow-x-auto rounded-2xl border">
+            <table className="w-full min-w-[1060px] table-fixed text-sm">
+              <thead>
+                <tr className="border-b bg-slate-50">
+                  <th className="sticky left-0 z-20 w-[190px] border-r bg-slate-50 p-3 text-left">Usuario</th>
+                  <th className="sticky left-[190px] z-20 w-[300px] min-w-[300px] border-x bg-slate-50 p-3 text-left shadow-[8px_0_14px_-14px_rgba(15,23,42,0.75)]">
+                    Acciones
+                  </th>
+                  <th className="w-[180px] p-3 text-left">Nombre</th>
+                  <th className="w-[145px] p-3 text-left">Rol</th>
+                  <th className="w-[170px] p-3 text-left">Supervisor</th>
+                  <th className="w-[95px] p-3 text-left">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center font-semibold text-slate-500">
+                      Cargando usuarios...
+                    </td>
+                  </tr>
+                ) : usuarios.length ? (
+                  usuarios.map((item) => (
+                    <tr key={item.id} className="border-b last:border-b-0">
+                      <td className="sticky left-0 z-10 w-[190px] border-r bg-white p-3">
+                        <span className="block truncate font-black" title={item.usuario}>
+                          {item.usuario}
+                        </span>
+                        <span
+                          className="block truncate text-xs font-semibold text-slate-500"
+                          title={item.email ?? ""}
+                        >
+                          {item.email}
+                        </span>
+                      </td>
+                      <td className="sticky left-[190px] z-10 w-[300px] min-w-[300px] border-x bg-white p-3 shadow-[8px_0_14px_-14px_rgba(15,23,42,0.75)]">
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => edit(item)}
+                            disabled={saving}
+                            className="w-full justify-start px-2 text-xs"
+                            title={`Editar ${item.usuario}`}
+                          >
+                            <Pencil className="h-4 w-4 shrink-0" /> Editar
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void toggle(item)}
+                            disabled={saving}
+                            className="w-full justify-start px-2 text-xs"
+                            title={item.activo ? `Desactivar ${item.usuario}` : `Activar ${item.usuario}`}
+                          >
+                            {item.activo ? "Desactivar" : "Activar"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openChangePassword(item)}
+                            disabled={saving}
+                            className="w-full justify-start px-2 text-[11px]"
+                            title={`Cambiar clave de ${item.usuario}`}
+                          >
+                            <KeyRound className="h-4 w-4 shrink-0" /> Cambiar clave
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => setResetTarget(item)}
+                            disabled={saving}
+                            className="w-full justify-start px-2 text-[11px]"
+                            title={`Restablecer clave de ${item.usuario}`}
+                          >
+                            <RotateCcw className="h-4 w-4 shrink-0" /> Restablecer
+                          </Button>
+                        </div>
+                      </td>
+                      <td className="p-3 font-semibold">{item.nombre}</td>
+                      <td className="p-3">
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">
+                          {roleLabelWithCode(
+                            item.roles?.codigo,
+                            item.codigo_operativo,
+                          )}
+                        </span>
+                      </td>
+                      <td className="p-3 text-xs font-semibold text-slate-600">
+                        {item.jefe
+                          ? roleLabelWithCode(
+                              "jefe",
+                              item.jefe.codigo_operativo,
+                            ) +
+                            " · " +
+                            (item.jefe.nombre ?? item.jefe.usuario)
+                          : "-"}
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs font-bold ${item.activo ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}
+                        >
+                          {item.activo ? "Activo" : "Inactivo"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center">
+                      <p className="font-black text-slate-700">
+                        No se encontraron usuarios.
+                      </p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        Pulsa Actualizar. Si continúa vacío, revisa
+                        SUPABASE_SERVICE_ROLE_KEY en el servidor.
+                      </p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
         </CardContent>
       </Card>
+
+      {passwordTarget && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="change-password-title"
+            >
+              <div className="w-full max-w-md rounded-2xl border bg-white p-5 shadow-2xl">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2
+                      id="change-password-title"
+                      className="text-xl font-black text-slate-950"
+                    >
+                      Cambiar clave
+                    </h2>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">
+                      Usuario: {passwordTarget.usuario}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Cerrar"
+                    onClick={() => {
+                      setPasswordTarget(null);
+                      setNewPassword("");
+                      setConfirmPassword("");
+                      setPasswordError("");
+                    }}
+                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="mt-5 space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="admin-new-password">
+                      Nueva contraseña
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="admin-new-password"
+                        type={showPassword ? "text" : "password"}
+                        value={newPassword}
+                        onChange={(e) => {
+                          setNewPassword(e.target.value);
+                          setPasswordError("");
+                        }}
+                        placeholder="Mínimo 8 caracteres"
+                        className="pr-11"
+                        autoComplete="new-password"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        aria-label={
+                          showPassword
+                            ? "Ocultar contraseña"
+                            : "Mostrar contraseña"
+                        }
+                        onClick={() =>
+                          setShowPassword((current) => !current)
+                        }
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="admin-confirm-password">
+                      Confirmar contraseña
+                    </Label>
+                    <Input
+                      id="admin-confirm-password"
+                      type={showPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={(e) => {
+                        setConfirmPassword(e.target.value);
+                        setPasswordError("");
+                      }}
+                      placeholder="Repite la nueva contraseña"
+                      autoComplete="new-password"
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !saving) {
+                          void changePassword();
+                        }
+                      }}
+                    />
+                  </div>
+
+                  {passwordError ? (
+                    <p
+                      role="alert"
+                      className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700"
+                    >
+                      {passwordError}
+                    </p>
+                  ) : null}
+
+                  <p className="rounded-xl bg-blue-50 p-3 text-xs font-semibold text-blue-800">
+                    La nueva clave se aplicará inmediatamente en Supabase
+                    Authentication.
+                  </p>
+                </div>
+
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPasswordTarget(null);
+                      setNewPassword("");
+                      setConfirmPassword("");
+                      setPasswordError("");
+                    }}
+                    disabled={saving}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void changePassword()}
+                    disabled={saving}
+                  >
+                    <KeyRound className="h-4 w-4" />
+                    {saving ? "Cambiando..." : "Cambiar clave"}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      <ConfirmDialog
+        open={Boolean(resetTarget)}
+        title="Restablecer clave"
+        description={`La contraseña de ${resetTarget?.usuario ?? "este usuario"} se restablecerá usando exactamente su nombre de usuario como nueva clave.`}
+        confirmText="Restablecer clave"
+        loading={saving}
+        onConfirm={() => void resetPassword()}
+        onClose={() => setResetTarget(null)}
+      />
+
+      {temporaryCredential && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="reset-password-result-title"
+            >
+              <div className="w-full max-w-md rounded-2xl border bg-white p-5 shadow-2xl">
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-green-100 text-green-700">
+                  <Check className="h-6 w-6" />
+                </div>
+                <h2
+                  id="reset-password-result-title"
+                  className="mt-4 text-xl font-black text-slate-950"
+                >
+                  Clave restablecida
+                </h2>
+                <p className="mt-1 text-sm font-semibold text-slate-500">
+                  Usuario: {temporaryCredential.usuario}
+                </p>
+                <p className="mt-4 rounded-xl bg-yellow-50 p-3 text-xs font-semibold text-yellow-800">
+                  La nueva clave es igual al nombre de usuario. Entrégala al
+                  usuario y pídele que la cambie después de ingresar.
+                </p>
+                <div className="mt-4 flex items-center gap-2 rounded-xl border bg-slate-50 p-3">
+                  <code className="min-w-0 flex-1 select-all break-all text-sm font-black text-slate-900">
+                    {temporaryCredential.password}
+                  </code>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void copyTemporaryPassword()}
+                  >
+                    {copied ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Clipboard className="h-4 w-4" />
+                    )}
+                    {copied ? "Copiada" : "Copiar"}
+                  </Button>
+                </div>
+                <div className="mt-6 flex justify-end">
+                  <Button
+                    type="button"
+                    onClick={() => setTemporaryCredential(null)}
+                  >
+                    Cerrar
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@
 Aplicación web para registrar, supervisar y exportar KPI de ventas por roles:
 
 - **Administrador**: gestión completa de usuarios, vendedores, KPI, reportes y exportación.
+- **Gerente**: vista ejecutiva de solo lectura. Puede consultar dashboard, tabla, avance y reportes de todos los supervisores, sin permisos para crear, editar o eliminar información.
 - **Supervisor**: seguimiento de vendedores y KPI bajo su alcance según RLS. El código interno en base de datos se mantiene como `jefe` para no romper RLS ni funciones existentes. Cada supervisor puede tener su propio código operativo, por ejemplo `L7`.
 - **Vendedor**: registro diario de compromiso, corte y cierre.
 
@@ -35,7 +36,7 @@ Stack principal:
 - Barra sticky de progreso: KPI completados de la etapa actual.
 - Validación inline por KPI.
 - Scroll automático al primer error.
-- Placeholder claro “Ingresa cantidad” para diferenciar campo vacío de cero real.
+- Los KPI pendientes se autocompletan con `0`, permitiendo modificar solo los que tengan una cantidad diferente.
 - Botón fijo/sticky “Enviar etapa”.
 - Prevención de doble envío y bloqueo mientras guarda.
 - Registros ya enviados quedan bloqueados.
@@ -61,7 +62,7 @@ Stack principal:
 - Búsqueda rápida por vendedor.
 - Filtro por grupo KPI.
 - Solo aparecen vendedores y KPI marcados como **Mostrar en Tabla Excel** desde las vistas Vendedores y KPI.
-- Campos vacíos ya no se muestran como `0`.
+- Las celdas sin registro se inicializan visualmente con `0`; solo se guardan cuando el usuario modifica y confirma cambios.
 - Exportación Excel desde tabla respetando filtros visibles e incluyendo totales.
 
 ### Reportes y exportación
@@ -133,17 +134,19 @@ En esta entrega se validó:
 6. Acceso de admin/supervisor a `/vendedor`: debe redirigir a panel admin.
 7. Rol administrador: usuarios, vendedores, KPI, tabla, reportes y exportación.
 8. Rol Supervisor: solo datos dentro de su alcance RLS. Validar que su código operativo se muestre junto al nombre si está configurado.
-9. Rol vendedor: solo su propio registro del día.
-10. Vista vendedor en celular: acordeones, progreso sticky y botón fijo.
-11. Enviar compromiso con campos vacíos: debe resaltar errores y hacer scroll al primero.
-12. Registrar cero real: debe aceptar `0`.
-13. Intentar número negativo: debe bloquearlo.
-14. Tabla Excel: cambiar fecha y confirmar que valores no quedan desactualizados.
-15. Tabla Excel: alternar Resumen/Detalle.
-16. Tabla Excel: editar compromiso/corte/cierre en Detalle editable, presionar Guardar cambios y verificar persistencia.
-17. Reportes: cambiar fechas y presionar Consultar.
-18. Exportación Excel con filtros aplicados.
-19. Gráficos sin datos: deben mostrar estado vacío o no fallar.
+9. Rol Gerente: solo Dashboard, Tabla Excel, Avance y Reportes; debe poder filtrar por supervisor y no debe ver acciones de edición.
+10. Rol vendedor: solo su propio registro del día.
+11. Vista vendedor en celular: acordeones, progreso sticky y botón fijo.
+12. Confirmar que los KPI pendientes aparezcan precargados en `0`.
+13. Registrar cero real: debe aceptar `0`.
+14. Intentar número negativo: debe bloquearlo.
+15. Tabla Excel: cambiar fecha y confirmar que valores no quedan desactualizados.
+16. Tabla Excel: alternar Resumen/Detalle para administrador y supervisor.
+17. Tabla Excel como gerente: no debe mostrar Detalle editable ni Guardar cambios.
+18. Reportes: cambiar fechas, seleccionar supervisor y presionar Consultar.
+19. Confirmar que Cierre del día y Alcance % coincidan con los datos filtrados.
+20. Exportación Excel con filtros aplicados.
+21. Gráficos sin datos: deben mostrar estado vacío o no fallar.
 
 ## Actualización v4
 
@@ -289,3 +292,72 @@ Esta migración crea `public.supervisores`, migra los supervisores existentes de
 3. Crea un supervisor con usuario, email interno `@kpibackus.pe`, nombre, código operativo y contraseña inicial.
 4. Luego asigna vendedores desde `/admin/vendedores`.
 5. Luego crea grupos/KPI desde `/admin/kpis`.
+
+## Actualización v8 - Seguimiento comercial y rol Gerente
+
+- Se agregó el título **Seguimiento de Compromisos Comerciales** junto al logo de Backus en la pantalla de acceso y en el panel principal.
+- La vista de Vendedores ahora presenta claramente las acciones **Agregar**, **Editar**, **Guardar** y **Guardar y agregar**.
+- Los KPI del vendedor se precargan con valor `0` en cada nueva etapa.
+- Reportes y gráficos muestran dos indicadores contiguos: **Cierre del día** y **Alcance %**.
+- Se agregó filtro por supervisor en Dashboard, Avance, Tabla Excel y Reportes.
+- Se corrigió la combinación de datos entre equipos: un vendedor solo se cruza con KPI pertenecientes a su mismo supervisor.
+- Se agregó el rol interno `gerente`, con lectura global mediante RLS y sin políticas de escritura.
+- La Tabla Excel exige seleccionar un supervisor para evitar matrices que mezclen KPI de equipos distintos.
+- Se incorporaron los supervisores solicitados:
+  - `RL` — Roberto Luna
+  - `RF` — Anthony Huertas
+
+### Migración obligatoria para v8
+
+Ejecuta en Supabase SQL Editor:
+
+```text
+sql/2026-07-12-gerente-supervisores-y-reportes.sql
+```
+
+La migración agrega el rol Gerente, actualiza las políticas RLS de lectura y registra RL/RF automáticamente cuando ya existen estos usuarios en Supabase Authentication:
+
+```text
+rluna@kpibackus.pe
+ahuertas@kpibackus.pe
+```
+
+Cuando todavía no existan, créalos primero en **Authentication > Users** y después ejecuta:
+
+```sql
+select public.setup_supervisor_operativo('rluna@kpibackus.pe', 'rluna', 'Roberto Luna', 'RL');
+select public.setup_supervisor_operativo('ahuertas@kpibackus.pe', 'ahuertas', 'Anthony Huertas', 'RF');
+```
+
+Para provisionar un usuario gerente después de crearlo en Authentication:
+
+```sql
+select public.setup_gerente('gerente@kpibackus.pe', 'gerente', 'Gerente Comercial');
+```
+
+## Actualización v9 — 13 de julio de 2026
+
+- En `/admin/vendedores`, las acciones **Editar**, **Ocultar/Mostrar** y **Activar/Desactivar** quedan en una columna fija al lado derecho. Ya no quedan fuera de pantalla cuando la tabla necesita desplazamiento horizontal.
+- El formulario de Vendedores conserva **Agregar**, **Guardar** y **Guardar y agregar**.
+- El administrador puede seleccionar el rol **Gerente** desde `/admin/usuarios`.
+- Cada gerente creado se registra en una tabla independiente `public.gerentes`, además de su perfil de autenticación en `public.usuarios`.
+- La tabla `public.gerentes` tiene RLS: el administrador puede gestionarla y el gerente solo puede leer su propia fila.
+- La vista del vendedor consulta únicamente KPI que cumplan `activo = true` y `visible_tabla = true` y que pertenezcan a su supervisor.
+- La política RLS de `public.kpis` también bloquea al vendedor el acceso a KPI ocultos.
+- La política de inserción de `registros_kpi` impide registrar directamente un KPI oculto mediante una llamada manual.
+- El control visual de KPI ahora se describe como **Visible para vendedor, Tabla Excel, reportes y gráficos**.
+
+Para una base ya instalada, ejecuta:
+
+```text
+sql/2026-07-13-gerentes-visibilidad-kpi-vendedores.sql
+```
+
+Después verifica la nueva tabla:
+
+```sql
+select g.usuario_id, g.nombre, g.activo, u.email
+from public.gerentes g
+join public.usuarios u on u.id = g.usuario_id
+order by g.nombre;
+```

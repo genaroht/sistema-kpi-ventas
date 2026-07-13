@@ -1,4 +1,4 @@
-export type Rol = "administrador" | "jefe" | "vendedor";
+export type Rol = "administrador" | "gerente" | "jefe" | "vendedor";
 export type KpiTipo = "normal" | "adicional";
 export type KpiGrupo = string;
 export type Etapa = "compromiso" | "corte" | "cierre";
@@ -32,6 +32,15 @@ export type Supervisor = {
   id: string;
   usuario_id: string;
   codigo_operativo: string;
+  nombre: string;
+  activo: boolean;
+  created_at: string;
+  usuario?: Pick<Usuario, "id" | "usuario" | "email" | "nombre" | "activo"> | null;
+};
+
+export type Gerente = {
+  id: string;
+  usuario_id: string;
   nombre: string;
   activo: boolean;
   created_at: string;

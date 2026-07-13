@@ -62,7 +62,13 @@ export function VendedorLoader() {
 
       const fecha = todayInLima();
       const [kRes, rRes] = await Promise.all([
-        supabase.from("kpis").select("id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at").eq("activo", true).order("orden"),
+        supabase
+          .from("kpis")
+          .select("id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at")
+          .eq("jefe_id", vendedor.jefe_id)
+          .eq("activo", true)
+          .eq("visible_tabla", true)
+          .order("orden"),
         supabase.from("registros_kpi").select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at").eq("fecha", fecha).eq("vendedor_id", vendedor.id)
       ]);
 
@@ -75,7 +81,7 @@ export function VendedorLoader() {
 
       const kpis = (kRes.data ?? []) as Kpi[];
       if (!kpis.length) {
-        setError("No hay KPI activos para tu supervisor. Pide al supervisor o administrador que los active.");
+        setError("No hay KPI visibles y activos para tu supervisor. Pide al supervisor o administrador que los muestre o active.");
         return;
       }
 

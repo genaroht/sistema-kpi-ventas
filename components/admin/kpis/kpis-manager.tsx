@@ -303,8 +303,8 @@ export function KpisManager() {
               {editing ? "Editar KPI" : "Nuevo KPI"}
             </h2>
             <p className="mt-1 text-xs font-semibold text-slate-500">
-              Organiza los KPI por grupos y decide cuáles aparecen en Tabla
-              Excel, reportes y gráficos.
+              Organiza los KPI por grupos y decide cuáles puede registrar el
+              vendedor y cuáles aparecen en Tabla Excel, reportes y gráficos.
             </p>
           </div>
           {currentRole === "administrador" ? (
@@ -441,7 +441,7 @@ export function KpisManager() {
                 setForm({ ...form, visible_tabla: e.target.checked })
               }
             />{" "}
-            Mostrar en Tabla Excel, reportes y gráficos
+            Visible para vendedor, Tabla Excel, reportes y gráficos
           </label>
           <label className="flex items-center gap-2 text-sm font-semibold">
             <input

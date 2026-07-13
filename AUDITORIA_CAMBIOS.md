@@ -126,3 +126,53 @@ El foco principal fue reducir confusión en el registro de 21 KPI, corregir entr
 - El ZIP original contenía `.env.local`. No se incluye en el ZIP final. Las credenciales expuestas en un ZIP deben rotarse/reemplazarse en Supabase.
 - Si el proyecto está en producción, ejecuta el SQL actualizado o al menos revoca permisos de las funciones `setup_*`.
 - No se agregó una columna `grupo` a la base de datos para no romper el esquema actual. La agrupación de KPI se hace por helper frontend basado en nombres/tipo. Para una solución definitiva se recomienda una migración explícita de DB.
+
+## J. Actualización v8 — 12 de julio de 2026
+
+- Nuevo rol `gerente` con acceso global de lectura y bloqueo de escritura en frontend, guards de servidor y políticas RLS.
+- Filtro por supervisor en Dashboard, Tabla Excel, Avance y Reportes.
+- Corrección de integridad visual para no cruzar vendedores con KPI de otro supervisor.
+- Título principal “Seguimiento de Compromisos Comerciales” en branding Backus.
+- Acciones explícitas Agregar, Editar, Guardar y Guardar y agregar en Vendedores.
+- Autocompletado de KPI con cero en panel vendedor y tabla editable.
+- Indicadores Cierre del día y Alcance % en Reportes y Avance.
+- Migración `sql/2026-07-12-gerente-supervisores-y-reportes.sql` para rol, RLS y supervisores RL/RF.
+
+## K. Actualización v9 — 13 de julio de 2026
+
+- Se corrigió la tabla de Vendedores para mantener visible la columna Acciones mediante posición sticky. Los botones Editar y Ocultar/Mostrar ya no quedan fuera del viewport.
+- Se añadió la tabla independiente `public.gerentes` con índice, RLS, backfill y sincronización desde la creación/edición administrativa de usuarios.
+- La API `/api/admin/users` crea el registro operativo en `public.gerentes` cuando el rol seleccionado es `gerente`.
+- La vista vendedor filtra explícitamente por supervisor, estado activo y visibilidad del KPI.
+- RLS de `kpis` y `registros_kpi` evita que un vendedor lea o registre KPI ocultos aunque intente omitir el frontend.
+- Nueva migración: `sql/2026-07-13-gerentes-visibilidad-kpi-vendedores.sql`.
+
+## 2026-07-13 — Administración y edición de usuarios
+
+- La lista de usuarios se carga desde una API administrativa del servidor para evitar que errores de RLS o relaciones de PostgREST dejen la tabla vacía.
+- Se agregó edición completa para administradores: usuario, email interno, nombre, rol, supervisor, código operativo y estado.
+- Los cambios de usuario, email y nombre se sincronizan con Supabase Authentication.
+- Se sincronizan automáticamente las tablas operativas `supervisores`, `gerentes` y `vendedores` según el rol.
+- La columna Acciones queda fija y visible aun cuando la tabla tenga desplazamiento horizontal.
+- Se añadieron estados de carga, contador, botón Actualizar y mensajes explícitos cuando el servidor no tiene `SUPABASE_SERVICE_ROLE_KEY`.
+- Se evita que un administrador se desactive o se quite su propio rol.
+- Se evita cambiar de rol a un supervisor que todavía tenga vendedores o KPI asociados.
+
+## 2026-07-13 — Gestión de claves desde Usuarios
+
+- La columna Acciones usa una cuadrícula compacta y fija para mantener visibles Editar, Activar/Desactivar, Cambiar clave y Restablecer clave.
+- Cambiar clave abre un modal con nueva contraseña, confirmación y control mostrar/ocultar.
+- Restablecer clave usa exactamente el nombre de usuario como nueva contraseña y lo muestra con botón Copiar.
+- Cambiar clave abre mediante un portal global, muestra errores dentro del modal y recupera correctamente el estado ante fallos de red o API.
+- La API administrativa de contraseñas distingue las acciones `change` y `reset`, valida un mínimo de 8 caracteres y mantiene el uso de `SUPABASE_SERVICE_ROLE_KEY` exclusivamente en servidor.
+- No se requiere migración SQL para esta actualización.
+
+## 2026-07-13 — Corrección de visibilidad de acciones en Usuarios
+
+- Se identificó que los botones sí existían, pero la tarjeta de la tabla crecía por su ancho mínimo y el `overflow-x-hidden` del layout los dejaba fuera del viewport.
+- La cuadrícula principal y la tarjeta de usuarios ahora usan `min-w-0`, de modo que la tabla queda contenida dentro del ancho disponible.
+- Las columnas `Usuario` y `Acciones` se movieron al inicio y permanecen fijas a la izquierda durante el desplazamiento horizontal.
+- Los botones Editar, Activar/Desactivar, Cambiar clave y Restablecer quedan visibles sin tener que llegar al extremo derecho de la tabla.
+- Se añadieron títulos accesibles a las acciones para identificar el usuario afectado.
+- `npm run typecheck`: correcto.
+- `npm run build`: compilación y TypeScript correctos; el entorno de validación se interrumpió posteriormente en la generación de páginas con `EPIPE`.
