@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -14,7 +14,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
-import { advanceTone, formatDateHuman, numberOrZero, stageLabel } from "@/lib/utils";
+import { advanceLabel, advanceTone, calcOperationalAdvance, formatDateHuman, numberOrZero, stageLabel } from "@/lib/utils";
 import { groupKpis } from "@/lib/kpi-groups";
 import type {
   Etapa,
@@ -149,6 +149,23 @@ export function VendedorDia({
   }, [byStage, kpis.length, pendingKpis, selectedStage, values]);
 
   const progress = kpis.length ? (stageCompletedCount / kpis.length) * 100 : 0;
+  const savedStages = useMemo(
+    () => stages.filter((stage) => (byStage[stage]?.size ?? 0) > 0),
+    [byStage],
+  );
+
+  function advanceForKpi(kpiId: string) {
+    const compromiso = byStage.compromiso?.get(kpiId);
+    const corte = byStage.corte?.get(kpiId);
+    const cierre = byStage.cierre?.get(kpiId);
+    return calcOperationalAdvance({
+      compromiso: compromiso?.cantidad,
+      corte: corte?.cantidad,
+      cierre: cierre?.cantidad,
+      hasCorte: Boolean(corte),
+      hasCierre: Boolean(cierre),
+    });
+  }
 
   const statusText = stageDone("cierre")
     ? "Completo"
@@ -356,13 +373,89 @@ export function VendedorDia({
         {error ? <Alert tone="error">{error}</Alert> : null}
 
         {!selectedStage ? (
-          <Alert tone={availableStage ? "info" : stageDone("cierre") ? "success" : "warning"}>
-            {stageDone("cierre")
-              ? "Completaste compromiso, corte y cierre del día."
-              : availableStage
-                ? `Haz clic en la tarjeta ${stageLabel(availableStage)} para ingresar los datos.`
-                : `${stageLabel(nextPendingStage ?? "etapa")} está bloqueado. Espera que el supervisor o administrador lo habilite.`}
-          </Alert>
+          <>
+            <Alert tone={availableStage ? "info" : stageDone("cierre") ? "success" : "warning"}>
+              {stageDone("cierre")
+                ? "Completaste compromiso, RAD 1:45 pm y cierre del día."
+                : availableStage
+                  ? `Haz clic en la tarjeta ${stageLabel(availableStage)} para ingresar los datos.`
+                  : `${stageLabel(nextPendingStage ?? "etapa")} está bloqueado. Espera que el supervisor o administrador lo habilite.`}
+            </Alert>
+
+            {savedStages.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Datos registrados</CardTitle>
+                  <CardDescription>
+                    Resumen de los KPI que ya enviaste hoy. Al abrir una etapa habilitada, esta tabla se oculta para mostrar el formulario.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="kpi-scrollbar max-w-full overflow-x-auto">
+                    <table className="w-full min-w-[620px] border-collapse text-sm">
+                      <thead>
+                        <tr className="border-y bg-slate-100 text-left">
+                          <th className="px-4 py-3 font-black text-slate-700">KPI</th>
+                          {savedStages.map((stage) => (
+                            <th
+                              key={stage}
+                              className="min-w-[140px] border-l px-4 py-3 text-right font-black text-slate-700"
+                            >
+                              {stageLabel(stage)}
+                            </th>
+                          ))}
+                          <th className="min-w-[130px] border-l px-4 py-3 text-center font-black text-slate-700">
+                            % Avance
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupedKpis.map((group) => (
+                          <Fragment key={group.name}>
+                            <tr className="border-b bg-blue-50/70">
+                              <td
+                                colSpan={savedStages.length + 2}
+                                className="px-4 py-2 text-xs font-black uppercase tracking-wide text-blue-800"
+                              >
+                                {group.name}
+                              </td>
+                            </tr>
+                            {group.items.map((kpi) => (
+                              <tr key={kpi.id} className="border-b last:border-b-0 hover:bg-slate-50">
+                                <td className="px-4 py-3 font-bold text-slate-900">{kpi.nombre}</td>
+                                {savedStages.map((stage) => {
+                                  const record = byStage[stage]?.get(kpi.id);
+                                  return (
+                                    <td
+                                      key={`${kpi.id}-${stage}`}
+                                      className="border-l px-4 py-3 text-right font-black tabular-nums text-slate-800"
+                                    >
+                                      {record
+                                        ? Number(record.cantidad).toLocaleString("es-PE", {
+                                            maximumFractionDigits: 2,
+                                          })
+                                        : "—"}
+                                    </td>
+                                  );
+                                })}
+                                <td className="border-l px-4 py-3 text-center">
+                                  <span
+                                    className={`inline-flex rounded-full border px-2 py-1 text-xs font-black ${advanceTone(advanceForKpi(kpi.id))}`}
+                                  >
+                                    {advanceLabel(advanceForKpi(kpi.id))}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+          </>
         ) : (
           <Card>
             <CardHeader>

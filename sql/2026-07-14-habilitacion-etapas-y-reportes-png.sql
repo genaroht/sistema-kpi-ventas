@@ -1,5 +1,5 @@
 -- Mejoras 2026-07-14
--- Habilitación diaria de compromiso, corte y cierre por supervisor.
+-- Habilitación diaria de compromiso, RAD 1:45 pm y cierre por supervisor.
 -- Ejecutar una sola vez en Supabase SQL Editor con permisos de propietario.
 
 begin;
@@ -148,7 +148,7 @@ begin
       and k.visible_tabla = true;
 
     if v_previous_count < v_expected_kpis then
-      raise exception 'Primero debe completar corte';
+      raise exception 'Primero debe completar RAD 1:45 pm';
     end if;
   end if;
 
@@ -162,7 +162,7 @@ before insert on public.registros_kpi
 for each row execute function public.enforce_stage_order();
 
 comment on table public.habilitacion_etapas is
-  'Control diario por supervisor para habilitar o bloquear compromiso, corte y cierre del vendedor.';
+  'Control diario por supervisor para habilitar o bloquear compromiso, RAD 1:45 pm y cierre del vendedor.';
 
 commit;
 

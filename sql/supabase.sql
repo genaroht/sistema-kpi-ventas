@@ -8,6 +8,7 @@ create extension if not exists pgcrypto;
 -- Limpieza segura para desarrollo local.
 drop trigger if exists on_auth_user_created on auth.users;
 drop trigger if exists trg_registros_stage_order on public.registros_kpi;
+drop trigger if exists trg_sync_kpi_group_name on public.kpi_grupos;
 drop function if exists public.handle_new_user() cascade;
 drop function if exists public.current_user_role() cascade;
 drop function if exists public.is_administrador() cascade;
@@ -16,6 +17,7 @@ drop function if exists public.is_jefe() cascade;
 drop function if exists public.current_jefe_id() cascade;
 drop function if exists public.current_vendedor_id() cascade;
 drop function if exists public.enforce_stage_order() cascade;
+drop function if exists public.sync_kpi_group_name() cascade;
 drop function if exists public.get_login_email(text) cascade;
 drop function if exists public.setup_admin(text,text,text) cascade;
 drop function if exists public.setup_gerente(text,text,text) cascade;
@@ -159,6 +161,33 @@ create index idx_habilitacion_etapas_jefe_fecha on public.habilitacion_etapas(je
 create index idx_registros_fecha on public.registros_kpi(fecha);
 create index idx_registros_vendedor_fecha on public.registros_kpi(vendedor_id, fecha);
 create index idx_registros_kpi_fecha on public.registros_kpi(kpi_id, fecha);
+
+-- Mantiene el nombre del grupo dentro de los KPI cuando se renombra el grupo maestro.
+create or replace function public.sync_kpi_group_name()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.nombre is distinct from old.nombre then
+    update public.kpis
+    set grupo = new.nombre
+    where jefe_id = old.jefe_id
+      and lower(trim(grupo)) = lower(trim(old.nombre));
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke execute on function public.sync_kpi_group_name() from public, anon, authenticated;
+
+create trigger trg_sync_kpi_group_name
+after update of nombre on public.kpi_grupos
+for each row
+when (old.nombre is distinct from new.nombre)
+execute function public.sync_kpi_group_name();
 
 -- Perfil automático al crear usuarios Auth.
 -- Por defecto queda como vendedor. Luego el administrador le cambia rol desde tabla o SQL.
@@ -385,7 +414,7 @@ begin
       and k.visible_tabla = true;
 
     if v_previous_count < v_expected_kpis then
-      raise exception 'Primero debe completar corte';
+      raise exception 'Primero debe completar RAD 1:45 pm';
     end if;
   end if;
 
@@ -1003,5 +1032,105 @@ revoke execute on function public.setup_vendedor_demo(text,text,text,text,text) 
 
 
 comment on table public.gerentes is 'Registro operativo independiente de usuarios con rol gerente.';
-comment on table public.habilitacion_etapas is 'Control diario por supervisor para habilitar o bloquear compromiso, corte y cierre del vendedor.';
+comment on table public.habilitacion_etapas is 'Control diario por supervisor para habilitar o bloquear compromiso, RAD 1:45 pm y cierre del vendedor.';
 comment on column public.kpis.visible_tabla is 'Controla si el KPI es visible para el vendedor, Tabla Excel, reportes y gráficos.';
+
+-- ================================================================
+-- 2026-07-14: Vista gerencial y asignación Gerente -> Supervisor
+-- Para instalaciones nuevas, la asignación se administra en Usuarios.
+-- ================================================================
+
+create or replace function public.is_supervisor_assigned_to_current_manager(p_supervisor_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(
+    public.current_user_role() = 'gerente'
+    and exists (
+      select 1
+      from public.usuarios supervisor_user
+      join public.roles supervisor_role on supervisor_role.id = supervisor_user.rol_id
+      where supervisor_user.id = p_supervisor_id
+        and supervisor_user.jefe_id = auth.uid()
+        and supervisor_user.activo = true
+        and supervisor_role.codigo = 'jefe'
+    ),
+    false
+  );
+$$;
+
+grant execute on function public.is_supervisor_assigned_to_current_manager(uuid) to authenticated;
+
+-- Para políticas RLS con alcance gerencial estricto, ejecutar también
+-- sql/2026-07-14-vista-gerencial-asignaciones.sql cuando se actualiza una base existente.
+
+-- Alcance de lectura del gerente limitado a sus supervisores asignados.
+drop policy if exists "usuarios_select_scoped" on public.usuarios;
+create policy "usuarios_select_scoped" on public.usuarios for select to authenticated using (
+  id = auth.uid()
+  or public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+  or (public.is_gerente() and jefe_id = auth.uid())
+);
+
+drop policy if exists "supervisores_select_scoped" on public.supervisores;
+create policy "supervisores_select_scoped" on public.supervisores for select to authenticated using (
+  public.is_administrador()
+  or usuario_id = auth.uid()
+  or public.current_jefe_id() = usuario_id
+  or public.is_supervisor_assigned_to_current_manager(usuario_id)
+);
+
+drop policy if exists "vendedores_select_scoped" on public.vendedores;
+create policy "vendedores_select_scoped" on public.vendedores for select to authenticated using (
+  public.is_administrador()
+  or jefe_id = public.current_jefe_id()
+  or usuario_id = auth.uid()
+  or public.is_supervisor_assigned_to_current_manager(jefe_id)
+);
+
+drop policy if exists "kpis_select_scoped" on public.kpis;
+create policy "kpis_select_scoped" on public.kpis for select to authenticated using (
+  public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+  or public.is_supervisor_assigned_to_current_manager(jefe_id)
+  or (
+    public.current_user_role() = 'vendedor'
+    and jefe_id = public.current_jefe_id()
+    and activo = true
+    and visible_tabla = true
+  )
+);
+
+drop policy if exists "kpi_grupos_select_scoped" on public.kpi_grupos;
+create policy "kpi_grupos_select_scoped" on public.kpi_grupos for select to authenticated using (
+  public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+  or jefe_id = public.current_jefe_id()
+  or public.is_supervisor_assigned_to_current_manager(jefe_id)
+);
+
+drop policy if exists "habilitacion_etapas_select_scoped" on public.habilitacion_etapas;
+create policy "habilitacion_etapas_select_scoped" on public.habilitacion_etapas for select to authenticated using (
+  public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+  or jefe_id = public.current_jefe_id()
+  or public.is_supervisor_assigned_to_current_manager(jefe_id)
+);
+
+drop policy if exists "registros_select_scoped" on public.registros_kpi;
+create policy "registros_select_scoped" on public.registros_kpi for select to authenticated using (
+  public.is_administrador()
+  or exists (
+    select 1 from public.vendedores v
+    where v.id = vendedor_id
+      and (
+        v.jefe_id = public.current_jefe_id()
+        or public.is_supervisor_assigned_to_current_manager(v.jefe_id)
+      )
+  )
+  or vendedor_id = public.current_vendedor_id()
+);

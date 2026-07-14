@@ -1,4 +1,4 @@
-import { calcPercent } from "@/lib/utils";
+import { calcOperationalAdvance } from "@/lib/utils";
 import type { Etapa, Kpi, RegistroKpi, Vendedor } from "@/types/database";
 
 export type KpiSnapshot = "compromiso" | "corte" | "cierre";
@@ -9,7 +9,7 @@ const snapshotColumns: Record<KpiSnapshot, SnapshotColumn[]> = {
   compromiso: [{ key: "compromiso", label: "Compromiso" }],
   corte: [
     { key: "compromiso", label: "Compromiso" },
-    { key: "corte", label: "Corte 1:45" },
+    { key: "corte", label: "RAD 1:45 pm" },
   ],
   cierre: [
     { key: "compromiso", label: "Compromiso" },
@@ -31,6 +31,21 @@ function getValue(
         row.kpi_id === kpiId &&
         row.etapa === etapa,
     )?.cantidad ?? 0,
+  );
+}
+
+
+function hasValue(
+  registros: RegistroKpi[],
+  vendedorId: string,
+  kpiId: string,
+  etapa: Etapa,
+) {
+  return registros.some(
+    (row) =>
+      row.vendedor_id === vendedorId &&
+      row.kpi_id === kpiId &&
+      row.etapa === etapa,
   );
 }
 
@@ -97,7 +112,7 @@ function drawText(
 
 function snapshotTitle(snapshot: KpiSnapshot) {
   if (snapshot === "compromiso") return "Reporte de compromisos";
-  if (snapshot === "corte") return "Reporte de compromiso y corte 1:45";
+  if (snapshot === "corte") return "Reporte de compromiso y RAD 1:45 pm";
   return "Reporte de compromiso, cierre y avance";
 }
 
@@ -229,14 +244,22 @@ export async function downloadKpiSnapshotPng(params: {
     x = zoneWidth + vendorWidth;
     params.kpis.forEach((kpi) => {
       const compromiso = getValue(params.registros, vendedor.id, kpi.id, "compromiso");
+      const corte = getValue(params.registros, vendedor.id, kpi.id, "corte");
       const cierre = getValue(params.registros, vendedor.id, kpi.id, "cierre");
+      const avance = calcOperationalAdvance({
+        compromiso,
+        corte,
+        cierre,
+        hasCorte: hasValue(params.registros, vendedor.id, kpi.id, "corte"),
+        hasCierre: hasValue(params.registros, vendedor.id, kpi.id, "cierre"),
+      });
       columns.forEach((column) => {
         fillCell(ctx, x, y, metricWidth, rowHeight, rowFill);
         const value =
           column.key === "avance"
-            ? calcPercent(cierre, compromiso)
+            ? avance
             : getValue(params.registros, vendedor.id, kpi.id, column.key);
-        const label = column.key === "avance" ? (value == null ? "SC" : `${Math.round(value)}%`) : Number(value).toLocaleString("es-PE");
+        const label = column.key === "avance" ? `${Math.round(value)}%` : Number(value).toLocaleString("es-PE");
         drawText(ctx, label, x + metricWidth - 12, y + rowHeight / 2, metricWidth - 20, {
           font: "800 13px Arial, sans-serif",
           align: "right",
@@ -272,16 +295,21 @@ export async function downloadKpiSnapshotPng(params: {
       (sum, vendedor) => sum + getValue(params.registros, vendedor.id, kpi.id, "compromiso"),
       0,
     );
-    const totalCierre = params.vendedores.reduce(
-      (sum, vendedor) => sum + getValue(params.registros, vendedor.id, kpi.id, "cierre"),
-      0,
-    );
+    const totalLogrado = params.vendedores.reduce((sum, vendedor) => {
+      if (hasValue(params.registros, vendedor.id, kpi.id, "cierre")) {
+        return sum + getValue(params.registros, vendedor.id, kpi.id, "cierre");
+      }
+      if (hasValue(params.registros, vendedor.id, kpi.id, "corte")) {
+        return sum + getValue(params.registros, vendedor.id, kpi.id, "corte");
+      }
+      return sum;
+    }, 0);
     columns.forEach((column) => {
       fillCell(ctx, x, y, metricWidth, totalHeight, "#172554", "#1e40af");
       const etapa = column.key;
       const value =
         etapa === "avance"
-          ? calcPercent(totalCierre, totalCompromiso)
+          ? totalCompromiso > 0 ? (totalLogrado / totalCompromiso) * 100 : 0
           : params.vendedores.reduce(
               (sum, vendedor) =>
                 sum + getValue(params.registros, vendedor.id, kpi.id, etapa),
@@ -290,9 +318,7 @@ export async function downloadKpiSnapshotPng(params: {
       drawText(
         ctx,
         column.key === "avance"
-          ? value == null
-            ? "SC"
-            : `${Math.round(value)}%`
+          ? `${Math.round(value)}%`
           : Number(value).toLocaleString("es-PE"),
         x + metricWidth - 12,
         y + totalHeight / 2,
@@ -313,12 +339,15 @@ export async function downloadKpiSnapshotPng(params: {
       else reject(new Error("No se pudo generar la imagen PNG."));
     }, "image/png");
   });
+  const filename = params.filename ?? `reporte-${params.snapshot}-${params.fecha}.png`;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = params.filename ?? `reporte-${params.snapshot}-${params.fecha}.png`;
+  anchor.download = filename;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+
+  return { blob, filename };
 }

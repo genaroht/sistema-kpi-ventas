@@ -257,6 +257,24 @@ export async function POST(request: Request) {
     );
   }
 
+  if (roleCode === "jefe" && !payload.jefeId) {
+    return jsonError("Selecciona el gerente responsable del supervisor.");
+  }
+
+  if (roleCode === "jefe" && payload.jefeId) {
+    const { data: managerProfile } = await admin
+      .from("usuarios")
+      .select("id,rol_id,activo")
+      .eq("id", payload.jefeId)
+      .single();
+    const { data: managerRole } = managerProfile
+      ? await admin.from("roles").select("codigo").eq("id", managerProfile.rol_id).single()
+      : { data: null };
+    if (!managerProfile?.activo || managerRole?.codigo !== "gerente") {
+      return jsonError("El gerente seleccionado no está activo o no tiene rol de gerente.");
+    }
+  }
+
   if (roleCode === "jefe" && payload.codigoOperativo) {
     const { data: duplicatedSupervisor } = await admin
       .from("supervisores")
@@ -502,6 +520,21 @@ export async function PATCH(request: Request) {
     if (!payload.codigoOperativo) {
       return jsonError("El código operativo es obligatorio para supervisores.");
     }
+    if (!payload.jefeId) {
+      return jsonError("Selecciona el gerente responsable del supervisor.");
+    }
+
+    const { data: managerProfile } = await admin
+      .from("usuarios")
+      .select("id,rol_id,activo")
+      .eq("id", payload.jefeId)
+      .single();
+    const { data: managerRole } = managerProfile
+      ? await admin.from("roles").select("codigo").eq("id", managerProfile.rol_id).single()
+      : { data: null };
+    if (!managerProfile?.activo || managerRole?.codigo !== "gerente") {
+      return jsonError("El gerente seleccionado no está activo o no tiene rol de gerente.");
+    }
 
     const { data: duplicatedSupervisor } = await admin
       .from("supervisores")
@@ -536,6 +569,16 @@ export async function PATCH(request: Request) {
       .single();
     if (supervisorRole?.codigo !== "jefe") {
       return jsonError("El usuario seleccionado no tiene rol de supervisor.");
+    }
+  }
+
+  if (previousRoleCode === "gerente" && (nextRoleCode !== "gerente" || !payload.activo)) {
+    const { count: assignedSupervisors } = await admin
+      .from("usuarios")
+      .select("id", { count: "exact", head: true })
+      .eq("jefe_id", payload.id);
+    if ((assignedSupervisors ?? 0) > 0) {
+      return jsonError("Reasigna primero los supervisores de este gerente antes de cambiar su rol o desactivarlo.");
     }
   }
 
@@ -604,7 +647,7 @@ export async function PATCH(request: Request) {
     email: payload.email,
     nombre: payload.nombre,
     rol_id: payload.rolId,
-    jefe_id: nextRoleCode === "vendedor" ? payload.jefeId : null,
+    jefe_id: nextRoleCode === "vendedor" || nextRoleCode === "jefe" ? payload.jefeId : null,
     codigo_operativo:
       nextRoleCode === "jefe" ? payload.codigoOperativo : null,
     activo: payload.activo,

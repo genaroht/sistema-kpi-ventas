@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { DEFAULT_KPI_GROUPS, getOrderedGroupNames } from "@/lib/kpi-groups";
+import { getOrderedGroupNames } from "@/lib/kpi-groups";
 import { roleLabelWithCode } from "@/lib/display-labels";
 
 const empty = {
@@ -120,16 +120,23 @@ export function KpisManager() {
         (group) =>
           !selectedSupervisorId || group.jefe_id === selectedSupervisorId,
       )
-      .map((group) => group.nombre);
+      .map((group) => group.nombre.trim())
+      .filter(Boolean);
+
+    // Los grupos maestros son la única fuente del selector. Solo cuando una
+    // instalación aún no tiene kpi_grupos se usa el grupo de los KPI existentes.
+    if (scopedGroups.length > 0) return getOrderedGroupNames([], scopedGroups);
+
     const scopedKpis = items.filter(
       (item) => !selectedSupervisorId || item.jefe_id === selectedSupervisorId,
     );
-    return getOrderedGroupNames(scopedKpis, [
-      ...DEFAULT_KPI_GROUPS,
-      ...scopedGroups,
-      form.grupo ? String(form.grupo) : "",
-    ]);
-  }, [form.grupo, groups, items, selectedSupervisorId]);
+    return getOrderedGroupNames(scopedKpis);
+  }, [groups, items, selectedSupervisorId]);
+
+  useEffect(() => {
+    if (groupOptions.length === 0 || groupOptions.includes(String(form.grupo))) return;
+    setForm((current) => ({ ...current, grupo: groupOptions[0] as KpiGrupo }));
+  }, [form.grupo, groupOptions]);
 
   function edit(item: KpiRow) {
     setEditing(item.id);
@@ -236,20 +243,31 @@ export function KpisManager() {
             { onConflict: "jefe_id,nombre" },
           );
 
+    let syncError: string | null = null;
     if (!result.error && previous && previous.nombre !== nombre) {
-      await supabase
+      const { error: kpiSyncError } = await supabase
         .from("kpis")
         .update({ grupo: nombre })
         .eq("jefe_id", previous.jefe_id)
         .eq("grupo", previous.nombre);
+
+      if (kpiSyncError) {
+        syncError = kpiSyncError.message;
+        await supabase
+          .from("kpi_grupos")
+          .update({ nombre: previous.nombre, orden: previous.orden })
+          .eq("id", previous.id);
+      }
     }
     setSavingGroup(false);
 
-    if (result.error) {
+    if (result.error || syncError) {
       setMessage(
-        editingGroup
-          ? "No se pudo editar el grupo. Revisa permisos o duplicados."
-          : "No se pudo crear el grupo. Revisa permisos o si ya existe.",
+        syncError
+          ? "No se pudo actualizar el nombre en los KPI del grupo. Se restauró el nombre anterior."
+          : editingGroup
+            ? "No se pudo editar el grupo. Revisa permisos o duplicados."
+            : "No se pudo crear el grupo. Revisa permisos o si ya existe.",
       );
       return;
     }

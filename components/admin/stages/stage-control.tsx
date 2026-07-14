@@ -17,7 +17,7 @@ const stages: Array<{
   field: "compromiso_activo" | "corte_activo" | "cierre_activo";
 }> = [
   { key: "compromiso", label: "Compromiso", field: "compromiso_activo" },
-  { key: "corte", label: "Corte 1:45 pm", field: "corte_activo" },
+  { key: "corte", label: "RAD 1:45 pm", field: "corte_activo" },
   { key: "cierre", label: "Cierre", field: "cierre_activo" },
 ];
 

@@ -148,6 +148,10 @@ export function UsuariosManager() {
     () => usuarios.filter((u) => u.roles?.codigo === "jefe" && u.activo),
     [usuarios],
   );
+  const gerentes = useMemo(
+    () => usuarios.filter((u) => u.roles?.codigo === "gerente" && u.activo),
+    [usuarios],
+  );
   const selectedRoleCode = roles.find((r) => r.id === form.rol_id)?.codigo;
   const filteredVendedores = useMemo(() => {
     const query = vendorSearch.trim().toLowerCase();
@@ -244,6 +248,11 @@ export function UsuariosManager() {
       setSaving(false);
       return;
     }
+    if (selectedRoleCode === "jefe" && !form.jefe_id) {
+      setMessage("Selecciona el gerente responsable del supervisor.");
+      setSaving(false);
+      return;
+    }
     if (selectedRoleCode === "vendedor" && !form.jefe_id) {
       setMessage("Un usuario vendedor debe estar asignado a un supervisor.");
       setSaving(false);
@@ -263,7 +272,7 @@ export function UsuariosManager() {
       email: normalizedEmail,
       nombre: form.nombre.trim(),
       rol_id: form.rol_id,
-      jefe_id: selectedRoleCode === "vendedor" ? form.jefe_id : null,
+      jefe_id: selectedRoleCode === "vendedor" || selectedRoleCode === "jefe" ? form.jefe_id : null,
       codigo_operativo:
         selectedRoleCode === "jefe"
           ? form.codigo_operativo.trim() || null
@@ -501,9 +510,8 @@ export function UsuariosManager() {
           </div>
           {selectedRoleCode === "gerente" ? (
             <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold text-blue-800">
-              El gerente podrá consultar los reportes de todos los supervisores,
-              pero no podrá crear, editar, ocultar ni eliminar información. Su
-              registro operativo se guardará en public.gerentes.
+              El gerente consultará únicamente los supervisores que el administrador le asigne.
+              Tendrá acceso de solo lectura y podrá descargar reportes gerenciales.
             </p>
           ) : null}
           {selectedRoleCode === "vendedor" && !editing ? (
@@ -582,18 +590,35 @@ export function UsuariosManager() {
             />
           </div>
           {selectedRoleCode === "jefe" ? (
-            <div className="space-y-2">
-              <Label>Código operativo del supervisor</Label>
-              <Input
-                value={form.codigo_operativo}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    codigo_operativo: e.target.value.toUpperCase(),
-                  })
-                }
-              />
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label>Código operativo del supervisor</Label>
+                <Input
+                  value={form.codigo_operativo}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      codigo_operativo: e.target.value.toUpperCase(),
+                    })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Gerente responsable</Label>
+                <Select
+                  value={form.jefe_id}
+                  onChange={(e) => setForm({ ...form, jefe_id: e.target.value })}
+                >
+                  <option value="">Selecciona gerente</option>
+                  {gerentes.map((gerente) => (
+                    <option key={gerente.id} value={gerente.id}>
+                      {gerente.nombre ?? gerente.usuario}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs font-semibold text-slate-500">El gerente solo verá los resultados de los supervisores asignados.</p>
+              </div>
+            </>
           ) : null}
           {selectedRoleCode === "vendedor" ? (
             <div className="space-y-2">
@@ -699,7 +724,7 @@ export function UsuariosManager() {
                   </th>
                   <th className="w-[180px] p-3 text-left">Nombre</th>
                   <th className="w-[145px] p-3 text-left">Rol</th>
-                  <th className="w-[170px] p-3 text-left">Supervisor</th>
+                  <th className="w-[190px] p-3 text-left">Responsable</th>
                   <th className="w-[95px] p-3 text-left">Estado</th>
                 </tr>
               </thead>
@@ -783,7 +808,7 @@ export function UsuariosManager() {
                       <td className="p-3 text-xs font-semibold text-slate-600">
                         {item.jefe
                           ? roleLabelWithCode(
-                              "jefe",
+                              item.roles?.codigo === "jefe" ? "gerente" : "jefe",
                               item.jefe.codigo_operativo,
                             ) +
                             " · " +

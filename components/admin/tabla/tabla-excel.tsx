@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FileImage, Loader2, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
-import { advanceLabel, advanceTone, calcPercent, todayInLima } from "@/lib/utils";
+import { advanceLabel, advanceTone, todayInLima } from "@/lib/utils";
 import { buildAvanceRows } from "@/lib/kpi-transform";
 import { groupKpis } from "@/lib/kpi-groups";
 import { downloadKpiExcel } from "@/lib/export/excel";
@@ -20,13 +20,13 @@ import { cn } from "@/lib/utils";
 
 const etapas: Array<{ key: Etapa; label: string }> = [
   { key: "compromiso", label: "Compromiso" },
-  { key: "corte", label: "Corte 1:45" },
+  { key: "corte", label: "RAD 1:45 pm" },
   { key: "cierre", label: "Cierre" },
 ];
 
 const snapshotLabels: Record<KpiSnapshot, string> = {
   compromiso: "Compromiso",
-  corte: "Corte 1:45",
+  corte: "RAD 1:45 pm",
   cierre: "Cierre",
 };
 
@@ -85,29 +85,47 @@ export function TablaExcel({
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const [vRes, kRes, sRes, rRes] = await Promise.all([
-      supabase
-        .from("vendedores")
-        .select("id,usuario_id,jefe_id,nombre,zona,visible_tabla,activo,created_at")
-        .eq("activo", true)
-        .eq("visible_tabla", true)
-        .order("zona"),
-      supabase
-        .from("kpis")
-        .select("id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at")
-        .eq("activo", true)
-        .eq("visible_tabla", true)
-        .order("orden"),
-      supabase
-        .from("supervisores")
-        .select("id,usuario_id,codigo_operativo,nombre,activo,created_at")
-        .eq("activo", true)
-        .order("codigo_operativo"),
-      supabase
-        .from("registros_kpi")
-        .select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at")
-        .eq("fecha", fecha),
+    let vendedoresQuery = supabase
+      .from("vendedores")
+      .select("id,usuario_id,jefe_id,nombre,zona,visible_tabla,activo,created_at")
+      .eq("activo", true)
+      .eq("visible_tabla", true)
+      .order("zona");
+    let kpisQuery = supabase
+      .from("kpis")
+      .select("id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at")
+      .eq("activo", true)
+      .eq("visible_tabla", true)
+      .order("orden");
+    let supervisoresQuery = supabase
+      .from("supervisores")
+      .select("id,usuario_id,codigo_operativo,nombre,activo,created_at")
+      .eq("activo", true)
+      .order("codigo_operativo");
+
+    if (role === "jefe") {
+      vendedoresQuery = vendedoresQuery.eq("jefe_id", currentUserId);
+      kpisQuery = kpisQuery.eq("jefe_id", currentUserId);
+      supervisoresQuery = supervisoresQuery.eq("usuario_id", currentUserId);
+    }
+
+    const [vRes, kRes, sRes] = await Promise.all([
+      vendedoresQuery,
+      kpisQuery,
+      supervisoresQuery,
     ]);
+
+    const vendedorIds = ((vRes.data ?? []) as Vendedor[]).map((item) => item.id);
+    let registrosQuery = supabase
+      .from("registros_kpi")
+      .select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at")
+      .eq("fecha", fecha);
+    if (role === "jefe") {
+      registrosQuery = vendedorIds.length
+        ? registrosQuery.in("vendedor_id", vendedorIds)
+        : registrosQuery.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+    }
+    const rRes = await registrosQuery;
 
     const firstError = vRes.error ?? kRes.error ?? sRes.error ?? rRes.error;
     if (firstError) {
@@ -119,7 +137,7 @@ export function TablaExcel({
     setSupervisores((sRes.data ?? []) as Supervisor[]);
     setRegistros((rRes.data ?? []) as RegistroKpi[]);
     setLoading(false);
-  }, [fecha, supabase]);
+  }, [currentUserId, fecha, role, supabase]);
 
   useEffect(() => {
     load();
@@ -144,6 +162,10 @@ export function TablaExcel({
     [kpis, supervisorId],
   );
   const groupedKpis = useMemo(() => groupKpis(scopedKpis), [scopedKpis]);
+  const orderedKpis = useMemo(
+    () => groupedKpis.flatMap((group) => group.items),
+    [groupedKpis],
+  );
   const scopedRegistros = useMemo(
     () =>
       registros.filter(
@@ -158,10 +180,10 @@ export function TablaExcel({
       buildAvanceRows({
         fecha,
         vendedores: scopedVendedores,
-        kpis: scopedKpis,
+        kpis: orderedKpis,
         registros: scopedRegistros,
       }),
-    [fecha, scopedKpis, scopedRegistros, scopedVendedores],
+    [fecha, orderedKpis, scopedRegistros, scopedVendedores],
   );
 
   const recordMap = useMemo(
@@ -218,7 +240,26 @@ export function TablaExcel({
   }
 
   function totalAdvance(kpiId: string) {
-    return calcPercent(totalFor(kpiId, "cierre"), totalFor(kpiId, "compromiso"));
+    let compromiso = 0;
+    let logrado = 0;
+
+    scopedVendedores.forEach((vendedor) => {
+      const compromisoKey = makeCellKey(vendedor.id, kpiId, "compromiso");
+      const corteKey = makeCellKey(vendedor.id, kpiId, "corte");
+      const cierreKey = makeCellKey(vendedor.id, kpiId, "cierre");
+      const compromisoValue = Number(drafts[compromisoKey] ?? 0);
+      const corteValue = Number(drafts[corteKey] ?? 0);
+      const cierreValue = Number(drafts[cierreKey] ?? 0);
+
+      compromiso += Number.isFinite(compromisoValue) ? compromisoValue : 0;
+      logrado += recordMap.has(cierreKey)
+        ? Number.isFinite(cierreValue) ? cierreValue : 0
+        : recordMap.has(corteKey)
+          ? Number.isFinite(corteValue) ? corteValue : 0
+          : 0;
+    });
+
+    return compromiso > 0 ? (logrado / compromiso) * 100 : 0;
   }
 
   function setDraftValue(key: CellKey, value: string) {
@@ -304,19 +345,66 @@ export function TablaExcel({
     setSnapshot(mode);
     setDownloading(mode);
     setError("");
+    setMessage("");
+
+    const probeFile = new File([""], "reporte.png", { type: "image/png" });
+    const supportsFileShare =
+      typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [probeFile] });
+    const whatsappTab = supportsFileShare
+      ? null
+      : window.open("about:blank", "reporte-kpi-whatsapp");
+
     try {
-      await downloadKpiSnapshotPng({
+      const { blob, filename } = await downloadKpiSnapshotPng({
         snapshot: mode,
         fecha,
         supervisorLabel: selectedSupervisor
           ? `${selectedSupervisor.codigo_operativo} · ${selectedSupervisor.nombre}`
           : undefined,
         vendedores: scopedVendedores,
-        kpis: scopedKpis,
+        kpis: orderedKpis,
         registros: scopedRegistros,
         filename: `${mode}-${selectedSupervisor?.codigo_operativo ?? "supervisor"}-${fecha}.png`,
       });
+
+      const shareText = `Reporte ${snapshotLabels[mode]} · ${fecha}${
+        selectedSupervisor ? ` · ${selectedSupervisor.codigo_operativo}` : ""
+      }`;
+
+      if (supportsFileShare) {
+        const file = new File([blob], filename, { type: "image/png" });
+        try {
+          await navigator.share({
+            title: shareText,
+            text: shareText,
+            files: [file],
+          });
+          setMessage("Imagen descargada y enviada al menú para compartir por WhatsApp.");
+        } catch (shareError) {
+          if (shareError instanceof DOMException && shareError.name === "AbortError") {
+            setMessage("La imagen quedó descargada. Se canceló la acción de compartir.");
+          } else {
+            const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(
+              `${shareText}. La imagen PNG ya fue descargada; adjúntala en esta conversación.`,
+            )}`;
+            window.location.assign(whatsappUrl);
+          }
+        }
+      } else {
+        const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(
+          `${shareText}. La imagen PNG ya fue descargada; adjúntala en esta conversación.`,
+        )}`;
+        if (whatsappTab) {
+          whatsappTab.location.href = whatsappUrl;
+        } else {
+          window.location.assign(whatsappUrl);
+        }
+        setMessage("Imagen descargada. Se abrió WhatsApp para compartirla.");
+      }
     } catch {
+      whatsappTab?.close();
       setError("No se pudo generar la imagen PNG.");
     } finally {
       setDownloading(null);
@@ -331,7 +419,7 @@ export function TablaExcel({
         fechaLabel: fecha,
         filename: `reporte-completo-${selectedSupervisor?.codigo_operativo ?? "supervisor"}-${fecha}.xlsx`,
         vendedores: scopedVendedores,
-        kpis: scopedKpis,
+        kpis: orderedKpis,
         registros: scopedRegistros,
         avanceRows,
       });
@@ -476,8 +564,8 @@ export function TablaExcel({
         </Badge>
         <span>
           {viewMode === "resumen"
-            ? "Las tres descargas PNG generan compromiso, corte y cierre según el formato solicitado."
-            : "El detalle incluye Compromiso, Corte, Cierre y Avance %."}
+            ? "Las tres descargas PNG generan compromiso, RAD 1:45 pm y cierre según el formato solicitado."
+            : "El detalle incluye Compromiso, RAD 1:45 pm, Cierre y Avance %."}
         </span>
       </div>
 
@@ -518,7 +606,7 @@ export function TablaExcel({
               <tr>
                 <th className="sticky left-0 z-40 border-b bg-cyan-100 px-4 py-2" />
                 <th className="sticky left-[120px] z-40 border-b bg-cyan-100 px-4 py-2" />
-                {scopedKpis.map((kpi, index) => (
+                {orderedKpis.map((kpi, index) => (
                   <th
                     key={kpi.id}
                     colSpan={viewMode === "detalle" ? 4 : summaryCols.length}
@@ -534,7 +622,7 @@ export function TablaExcel({
               <tr>
                 <th className="sticky left-0 z-40 border-b bg-white px-4 py-2" />
                 <th className="sticky left-[120px] z-40 border-b bg-white px-4 py-2" />
-                {scopedKpis.map((kpi) =>
+                {orderedKpis.map((kpi) =>
                   (viewMode === "detalle"
                     ? (["compromiso", "corte", "cierre", "avance"] as const)
                     : summaryCols
@@ -558,7 +646,7 @@ export function TablaExcel({
                   <td className="sticky left-[120px] z-20 min-w-[220px] border-b bg-white px-4 py-3 font-semibold">
                     {vendedor.nombre}
                   </td>
-                  {scopedKpis.map((kpi) => {
+                  {orderedKpis.map((kpi) => {
                     if (viewMode === "resumen") {
                       return summaryCols.map((column) => {
                         const value = rowValue(vendedor.id, kpi.id, column);
@@ -641,7 +729,7 @@ export function TablaExcel({
                 <td className="sticky left-[120px] z-30 min-w-[220px] border-t border-blue-800 bg-blue-950 px-4 py-3 text-xs font-semibold text-blue-100">
                   {scopedVendedores.length} vendedores visibles
                 </td>
-                {scopedKpis.map((kpi) => {
+                {orderedKpis.map((kpi) => {
                   const columns =
                     viewMode === "detalle"
                       ? (["compromiso", "corte", "cierre", "avance"] as const)

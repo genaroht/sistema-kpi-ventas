@@ -34,6 +34,30 @@ export function calcPercent(cierre: number | null | undefined, compromiso: numbe
   return (Number(cierre ?? 0) / Number(compromiso)) * 100;
 }
 
+/**
+ * Calcula el avance operativo usando la última etapa realmente registrada.
+ * Prioridad: Cierre -> RAD 1:45 pm -> 0. El valor 0 es válido, por eso
+ * la existencia de la etapa se recibe por separado de su cantidad.
+ */
+export function calcOperationalAdvance(params: {
+  compromiso: number | null | undefined;
+  corte: number | null | undefined;
+  cierre: number | null | undefined;
+  hasCorte: boolean;
+  hasCierre: boolean;
+}) {
+  const compromiso = Number(params.compromiso ?? 0);
+  if (!Number.isFinite(compromiso) || compromiso <= 0) return 0;
+
+  const achieved = params.hasCierre
+    ? Number(params.cierre ?? 0)
+    : params.hasCorte
+      ? Number(params.corte ?? 0)
+      : 0;
+
+  return (Number.isFinite(achieved) ? achieved : 0) / compromiso * 100;
+}
+
 export function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return "Sin compromiso";
   return `${Math.round(value)}%`;
@@ -55,7 +79,7 @@ export function advanceLabel(value: number | null | undefined) {
 export function stageLabel(stage: string) {
   const map: Record<string, string> = {
     compromiso: "Compromiso",
-    corte: "Corte 1:45 pm",
+    corte: "RAD 1:45 pm",
     cierre: "Cierre"
   };
   return map[stage] ?? stage;

@@ -11,30 +11,46 @@ import { Button } from "@/components/ui/button";
 import type { Rol } from "@/types/database";
 import { roleLabelWithCode } from "@/lib/display-labels";
 
-const baseNav = [
-  { href: "/admin/dashboard", label: "Dashboard", icon: Home, adminOnly: false, managerVisible: true },
-  { href: "/admin/reportes", label: "Reportes", icon: FileSpreadsheet, adminOnly: false, managerVisible: true },
-  { href: "/admin/avance", label: "Avance %", icon: LineChart, adminOnly: false, managerVisible: true },
-  { href: "/admin/supervisores", label: "Supervisores", icon: ShieldCheck, adminOnly: true, managerVisible: false },
-  { href: "/admin/vendedores", label: "Vendedores", icon: Users, adminOnly: false, managerVisible: false },
-  { href: "/admin/kpis", label: "KPI", icon: Target, adminOnly: false, managerVisible: false },
-  { href: "/admin/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true, managerVisible: false }
+const operativeNav = [
+  { href: "/admin/dashboard", label: "Dashboard", icon: Home, adminOnly: false },
+  { href: "/admin/reportes", label: "Reportes", icon: FileSpreadsheet, adminOnly: false },
+  { href: "/admin/avance", label: "Avance %", icon: LineChart, adminOnly: false },
+  { href: "/admin/supervisores", label: "Supervisores", icon: ShieldCheck, adminOnly: true },
+  { href: "/admin/vendedores", label: "Vendedores", icon: Users, adminOnly: false },
+  { href: "/admin/kpis", label: "KPI", icon: Target, adminOnly: false },
+  { href: "/admin/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true },
 ];
 
-export function AdminShell({ children, profileName }: { children: React.ReactNode; profileName: string }) {
+const managerNav = [
+  { href: "/admin/dashboard", label: "Dashboard gerencial", icon: Home },
+  { href: "/admin/supervisores", label: "Supervisores", icon: ShieldCheck },
+  { href: "/admin/avance", label: "Avance global", icon: LineChart },
+  { href: "/admin/reportes", label: "Reportes", icon: FileSpreadsheet },
+];
+
+export function AdminShell({
+  children,
+  profileName,
+  initialRole,
+  initialCodigoOperativo,
+}: {
+  children: React.ReactNode;
+  profileName: string;
+  initialRole: Rol;
+  initialCodigoOperativo: string | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState(profileName);
-  const [role, setRole] = useState<Rol | null>(null);
-  const [codigoOperativo, setCodigoOperativo] = useState<string | null>(null);
-  const [checking, setChecking] = useState(true);
+  const [role, setRole] = useState<Rol>(initialRole);
+  const [codigoOperativo, setCodigoOperativo] = useState<string | null>(initialCodigoOperativo);
+  const [checking, setChecking] = useState(false);
   const supabase = useMemo(() => createClient(), []);
 
-  const nav = baseNav.filter((item) => {
-    if (role === "gerente") return item.managerVisible;
-    return !item.adminOnly || role === "administrador";
-  });
+  const nav = role === "gerente"
+    ? managerNav
+    : operativeNav.filter((item) => !item.adminOnly || role === "administrador");
 
   useEffect(() => {
     async function checkRole() {
@@ -58,11 +74,20 @@ export function AdminShell({ children, profileName }: { children: React.ReactNod
         router.replace("/vendedor");
         return;
       }
-      if (userRole === "gerente" && !baseNav.some((item) => item.href === pathname && item.managerVisible)) {
+      if (userRole === "gerente") {
+        const managerRouteAllowed = managerNav.some(
+          (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+        );
+        if (!managerRouteAllowed) {
+          router.replace("/admin/dashboard");
+          return;
+        }
+      }
+      if (pathname === "/admin/usuarios" && userRole !== "administrador") {
         router.replace("/admin/dashboard");
         return;
       }
-      if (pathname === "/admin/usuarios" && userRole !== "administrador") {
+      if ((pathname === "/admin/vendedores" || pathname === "/admin/kpis") && userRole === "gerente") {
         router.replace("/admin/dashboard");
         return;
       }
@@ -71,8 +96,8 @@ export function AdminShell({ children, profileName }: { children: React.ReactNod
       setDisplayName(profile.nombre ?? profile.email ?? profile.usuario ?? profileName);
       setChecking(false);
     }
-    checkRole();
-  }, [router, supabase, profileName, pathname]);
+    void checkRole();
+  }, [pathname, profileName, router, supabase]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -94,7 +119,7 @@ export function AdminShell({ children, profileName }: { children: React.ReactNod
       <nav className="space-y-1">
         {nav.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = pathname === item.href || (item.href === "/admin/supervisores" && pathname.startsWith("/admin/supervisores/"));
           return (
             <Link
               key={item.href}
@@ -137,12 +162,12 @@ export function AdminShell({ children, profileName }: { children: React.ReactNod
 
       <main className="min-w-0 overflow-x-hidden p-4 pb-24 lg:ml-72 lg:w-[calc(100vw-18rem)] lg:max-w-[calc(100vw-18rem)] lg:p-6">{checking ? <div className="rounded-2xl border bg-white p-6 shadow-soft"><p className="font-bold">Validando acceso...</p></div> : children}</main>
 
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t bg-white/95 p-1 shadow-[0_-8px_22px_rgba(15,23,42,0.10)] backdrop-blur lg:hidden">
+      <nav className={`safe-bottom fixed inset-x-0 bottom-0 z-30 grid border-t bg-white/95 p-1 shadow-[0_-8px_22px_rgba(15,23,42,0.10)] backdrop-blur lg:hidden ${nav.length === 4 ? "grid-cols-4" : "grid-cols-5"}`}>
         {nav.slice(0, 5).map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = pathname === item.href || (item.href === "/admin/supervisores" && pathname.startsWith("/admin/supervisores/"));
           return (
-            <Link key={item.href} href={item.href} className={cn("flex flex-col items-center gap-1 rounded-xl px-1 py-2 text-[10px] font-bold", active ? "bg-blue-950 text-yellow-300" : "text-slate-500")}> 
+            <Link key={item.href} href={item.href} className={cn("flex flex-col items-center gap-1 rounded-xl px-1 py-2 text-[10px] font-bold", active ? "bg-blue-950 text-yellow-300" : "text-slate-500")}>
               <Icon className="h-4 w-4" /> {item.label}
             </Link>
           );

@@ -17,7 +17,6 @@ import { createClient } from "@/lib/supabase/browser";
 import {
   advanceLabel,
   advanceTone,
-  calcPercent,
   formatPercent,
   todayInLima,
 } from "@/lib/utils";
@@ -74,14 +73,8 @@ function statusFromRows(rows: RegistroKpi[], activeKpiCount: number) {
 
   if (counts.cierre >= activeKpiCount) return "Completo";
   if (counts.corte >= activeKpiCount) return "Pendiente cierre";
-  if (counts.compromiso >= activeKpiCount) return "Pendiente corte";
+  if (counts.compromiso >= activeKpiCount) return "Pendiente RAD";
   return "Pendiente compromiso";
-}
-
-function etapaTotal(rows: RegistroKpi[], kpiId: string, etapa: Etapa) {
-  return rows
-    .filter((row) => row.kpi_id === kpiId && row.etapa === etapa)
-    .reduce((total, row) => total + Number(row.cantidad || 0), 0);
 }
 
 function totalsForVendor(
@@ -93,22 +86,26 @@ function totalsForVendor(
   let compromiso = 0;
   let corte = 0;
   let cierre = 0;
-  const advances: number[] = [];
+  let logrado = 0;
 
   kpis.filter((kpi) => kpi.jefe_id === vendedor.jefe_id).forEach((kpi) => {
-    const kpiCompromiso = etapaTotal(rows, kpi.id, "compromiso");
-    const kpiCorte = etapaTotal(rows, kpi.id, "corte");
-    const kpiCierre = etapaTotal(rows, kpi.id, "cierre");
+    const compromisoRow = rows.find((row) => row.kpi_id === kpi.id && row.etapa === "compromiso");
+    const corteRow = rows.find((row) => row.kpi_id === kpi.id && row.etapa === "corte");
+    const cierreRow = rows.find((row) => row.kpi_id === kpi.id && row.etapa === "cierre");
+    const kpiCompromiso = Number(compromisoRow?.cantidad ?? 0);
+    const kpiCorte = Number(corteRow?.cantidad ?? 0);
+    const kpiCierre = Number(cierreRow?.cantidad ?? 0);
+
     compromiso += kpiCompromiso;
     corte += kpiCorte;
     cierre += kpiCierre;
-    const pct = calcPercent(kpiCierre, kpiCompromiso);
-    if (pct !== null) advances.push(pct);
+
+    // Para el total del vendedor, cada KPI usa la última etapa registrada:
+    // Cierre tiene prioridad; si no existe, se usa RAD 1:45 pm.
+    logrado += cierreRow ? kpiCierre : corteRow ? kpiCorte : 0;
   });
 
-  const avance = advances.length
-    ? Math.round(advances.reduce((a, b) => a + b, 0) / advances.length)
-    : 0;
+  const avance = compromiso > 0 ? (logrado / compromiso) * 100 : 0;
   return { compromiso, corte, cierre, avance };
 }
 
@@ -117,21 +114,26 @@ function averageAdvance(
   kpis: Kpi[],
   registros: RegistroKpi[],
 ) {
-  const percentages: number[] = [];
+  let compromiso = 0;
+  let logrado = 0;
 
   vendedores.forEach((vendedor) => {
+    const totals = totalsForVendor(vendedor, kpis, registros);
+    compromiso += totals.compromiso;
+
     const rows = registros.filter((row) => row.vendedor_id === vendedor.id);
     kpis.filter((kpi) => kpi.jefe_id === vendedor.jefe_id).forEach((kpi) => {
-      const compromiso = etapaTotal(rows, kpi.id, "compromiso");
-      const cierre = etapaTotal(rows, kpi.id, "cierre");
-      const pct = calcPercent(cierre, compromiso);
-      if (pct !== null) percentages.push(pct);
+      const corteRow = rows.find((row) => row.kpi_id === kpi.id && row.etapa === "corte");
+      const cierreRow = rows.find((row) => row.kpi_id === kpi.id && row.etapa === "cierre");
+      logrado += cierreRow
+        ? Number(cierreRow.cantidad ?? 0)
+        : corteRow
+          ? Number(corteRow.cantidad ?? 0)
+          : 0;
     });
   });
 
-  return percentages.length
-    ? percentages.reduce((a, b) => a + b, 0) / percentages.length
-    : null;
+  return compromiso > 0 ? (logrado / compromiso) * 100 : null;
 }
 
 function NumberPill({ label, value }: { label: string; value: number }) {
@@ -221,6 +223,7 @@ export function AdminDashboard() {
 
   const scopedVendedores = vendedores;
   const scopedKpis = kpis;
+  const hasSpecificKpi = selectedKpiId !== "todos";
 
   const filteredKpis = useMemo(
     () =>
@@ -263,13 +266,17 @@ export function AdminDashboard() {
       );
       if (status === "Completo") completos += 1;
       else if (status === "Pendiente cierre") pendienteCierre += 1;
-      else if (status === "Pendiente corte") pendienteCorte += 1;
+      else if (status === "Pendiente RAD") pendienteCorte += 1;
       else pendienteCompromiso += 1;
       return { vendedor, status };
     });
 
-    const avg = averageAdvance(dashboardVendedores, filteredKpis, registros);
-    const previousAvg = averageAdvance(dashboardVendedores, filteredKpis, previousRegistros);
+    const avg = hasSpecificKpi
+      ? averageAdvance(dashboardVendedores, filteredKpis, registros)
+      : null;
+    const previousAvg = hasSpecificKpi
+      ? averageAdvance(dashboardVendedores, filteredKpis, previousRegistros)
+      : null;
     const delta =
       avg !== null && previousAvg !== null ? avg - previousAvg : null;
 
@@ -283,9 +290,10 @@ export function AdminDashboard() {
       delta,
       vendorStatus,
     };
-  }, [registros, dashboardVendedores, filteredKpis, previousRegistros]);
+  }, [registros, dashboardVendedores, filteredKpis, previousRegistros, hasSpecificKpi]);
 
   const avancePorZona = useMemo<VendorProgressRow[]>(() => {
+    if (!hasSpecificKpi) return [];
     return dashboardVendedores
       .map((vendedor) => ({
         vendedorId: vendedor.id,
@@ -300,7 +308,7 @@ export function AdminDashboard() {
           a.zona.localeCompare(b.zona) ||
           a.nombre.localeCompare(b.nombre),
       );
-  }, [dashboardVendedores, filteredKpis, registros, supervisores]);
+  }, [dashboardVendedores, filteredKpis, registros, supervisores, hasSpecificKpi]);
 
 
   const cards = [
@@ -340,7 +348,7 @@ export function AdminDashboard() {
         : "border-green-200 bg-green-50",
     },
     {
-      title: "Pend. corte",
+      title: "Pend. RAD",
       value: metrics.pendienteCorte,
       icon: Activity,
       href: `/admin/reportes?fecha=${fecha}`,
@@ -359,10 +367,10 @@ export function AdminDashboard() {
     },
     {
       title: "Cumplimiento general",
-      value: formatPercent(metrics.avg),
+      value: hasSpecificKpi ? formatPercent(metrics.avg) : "Selecciona KPI",
       icon: BarIcon,
       href: "/admin/avance",
-      tone: advanceTone(metrics.avg),
+      tone: hasSpecificKpi ? advanceTone(metrics.avg) : "border-slate-200 bg-white",
     },
   ];
 
@@ -414,7 +422,7 @@ export function AdminDashboard() {
                 ? "Alerta: compromiso pendiente"
                 : "Compromiso al día"}
             </Badge>
-            {metrics.delta !== null ? (
+            {hasSpecificKpi && metrics.delta !== null ? (
               <Badge
                 className={
                   metrics.delta >= 0
@@ -480,7 +488,7 @@ export function AdminDashboard() {
           <CardHeader>
             <CardTitle>Avance de cumplimiento por zona</CardTitle>
             <CardDescription>
-              Vista por zona y vendedor con compromiso, corte, cierre y avance.
+              Vista por zona y vendedor con compromiso, RAD 1:45 pm, cierre y avance.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -490,6 +498,10 @@ export function AdminDashboard() {
                   <Skeleton key={index} className="h-9 w-full" />
                 ))}
               </div>
+            ) : !hasSpecificKpi ? (
+              <Alert tone="warning">
+                Selecciona un KPI para visualizar cantidades, avance y porcentajes. Los estados operativos y las tablas completas continúan disponibles con todos los KPI.
+              </Alert>
             ) : avancePorZona.length ? (
               <div className="space-y-3">
                 {avancePorZona.map((item) => (
@@ -511,7 +523,7 @@ export function AdminDashboard() {
                     />
                     <div className="flex flex-wrap gap-1 sm:justify-end">
                       <NumberPill label="Comp" value={item.compromiso} />
-                      <NumberPill label="Corte" value={item.corte} />
+                      <NumberPill label="RAD" value={item.corte} />
                       <NumberPill label="Cierre" value={item.cierre} />
                     </div>
                     <span

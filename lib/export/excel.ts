@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { advanceLabel, calcPercent, stageLabel } from "@/lib/utils";
+import { calcOperationalAdvance, stageLabel } from "@/lib/utils";
 import type { AvanceRow, Kpi, RegistroKpi, Vendedor } from "@/types/database";
 
 function safeSheetName(name: string) {
@@ -26,19 +26,28 @@ export async function downloadKpiExcel(params: {
   const topHeader = ["Zona", "Vendedor"];
   params.kpis.forEach((kpi) => topHeader.push(kpi.nombre, "", "", ""));
   const secondHeader = ["", ""];
-  params.kpis.forEach(() => secondHeader.push("Compromiso", "Corte 1:45", "Cierre", "% Avance"));
+  params.kpis.forEach(() => secondHeader.push("Compromiso", "RAD 1:45 pm", "Cierre", "% Avance"));
   matrix.addRow(topHeader);
   matrix.addRow(secondHeader);
 
   params.vendedores.forEach((vendedor) => {
     const row: Array<string | number> = [vendedor.zona, vendedor.nombre];
     params.kpis.forEach((kpi) => {
-      const get = (etapa: "compromiso" | "corte" | "cierre") => params.registros.find((r) => r.vendedor_id === vendedor.id && r.kpi_id === kpi.id && r.etapa === etapa)?.cantidad ?? 0;
-      const compromiso = Number(get("compromiso"));
-      const corte = Number(get("corte"));
-      const cierre = Number(get("cierre"));
-      const percent = calcPercent(cierre, compromiso);
-      row.push(compromiso, corte, cierre, percent === null ? "Sin compromiso" : Number((percent / 100).toFixed(4)));
+      const find = (etapa: "compromiso" | "corte" | "cierre") => params.registros.find((r) => r.vendedor_id === vendedor.id && r.kpi_id === kpi.id && r.etapa === etapa);
+      const compromisoRow = find("compromiso");
+      const corteRow = find("corte");
+      const cierreRow = find("cierre");
+      const compromiso = Number(compromisoRow?.cantidad ?? 0);
+      const corte = Number(corteRow?.cantidad ?? 0);
+      const cierre = Number(cierreRow?.cantidad ?? 0);
+      const percent = calcOperationalAdvance({
+        compromiso,
+        corte,
+        cierre,
+        hasCorte: Boolean(corteRow),
+        hasCierre: Boolean(cierreRow),
+      });
+      row.push(compromiso, corte, cierre, Number((percent / 100).toFixed(4)));
     });
     matrix.addRow(row);
   });
@@ -49,7 +58,17 @@ export async function downloadKpiExcel(params: {
       const value = params.registros.find((r) => r.vendedor_id === vendedor.id && r.kpi_id === kpi.id && r.etapa === etapa)?.cantidad ?? 0;
       return sum + Number(value);
     }, 0);
-    totalRow.push(total("compromiso"), total("corte"), total("cierre"), "");
+    const totalCompromiso = total("compromiso");
+    const totalCorte = total("corte");
+    const totalCierre = total("cierre");
+    const totalLogrado = params.vendedores.reduce((sum, vendedor) => {
+      const cierreRow = params.registros.find((r) => r.vendedor_id === vendedor.id && r.kpi_id === kpi.id && r.etapa === "cierre");
+      if (cierreRow) return sum + Number(cierreRow.cantidad ?? 0);
+      const corteRow = params.registros.find((r) => r.vendedor_id === vendedor.id && r.kpi_id === kpi.id && r.etapa === "corte");
+      return sum + Number(corteRow?.cantidad ?? 0);
+    }, 0);
+    const totalPercent = totalCompromiso > 0 ? totalLogrado / totalCompromiso : 0;
+    totalRow.push(totalCompromiso, totalCorte, totalCierre, Number(totalPercent.toFixed(4)));
   });
   const totalExcelRow = matrix.addRow(totalRow);
   totalExcelRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -71,8 +90,8 @@ export async function downloadKpiExcel(params: {
     base.addRow([r.fecha, vendedor?.zona ?? "", vendedor?.nombre ?? "", kpi?.nombre ?? "", stageLabel(r.etapa), Number(r.cantidad)]);
   });
 
-  avance.addRow(["Fecha", "Zona", "Vendedor", "KPI", "Compromiso", "Corte 1:45", "Cierre", "% Avance", "Estado"]);
-  params.avanceRows.forEach((r) => avance.addRow([r.fecha, r.zona, r.vendedor, r.kpi, r.compromiso, r.corte, r.cierre, r.avance === null ? "Sin compromiso" : Number((r.avance / 100).toFixed(4)), r.avance && r.avance > 100 ? "Superó meta" : r.estado]));
+  avance.addRow(["Fecha", "Zona", "Vendedor", "KPI", "Compromiso", "RAD 1:45 pm", "Cierre", "% Avance", "Estado"]);
+  params.avanceRows.forEach((r) => avance.addRow([r.fecha, r.zona, r.vendedor, r.kpi, r.compromiso, r.corte, r.cierre, Number(((r.avance ?? 0) / 100).toFixed(4)), r.avance && r.avance > 100 ? "Superó meta" : r.estado]));
 
   [base, avance].forEach((sheet) => {
     sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };

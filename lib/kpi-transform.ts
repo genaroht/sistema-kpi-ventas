@@ -1,4 +1,4 @@
-import { calcPercent } from "@/lib/utils";
+import { calcOperationalAdvance } from "@/lib/utils";
 import type { AvanceRow, Etapa, Kpi, RegistroJoined, RegistroKpi, Vendedor } from "@/types/database";
 
 export function buildAvanceRows(params: { fecha?: string; vendedores: Vendedor[]; kpis: Kpi[]; registros: RegistroKpi[] }): AvanceRow[] {
@@ -9,11 +9,20 @@ export function buildAvanceRows(params: { fecha?: string; vendedores: Vendedor[]
     kpis.forEach((kpi) => {
       if (vendedor.jefe_id !== kpi.jefe_id) return;
       const find = (etapa: Etapa) => registros.find((r) => r.vendedor_id === vendedor.id && r.kpi_id === kpi.id && r.etapa === etapa);
-      const compromiso = Number(find("compromiso")?.cantidad ?? 0);
-      const corte = Number(find("corte")?.cantidad ?? 0);
-      const cierre = Number(find("cierre")?.cantidad ?? 0);
-      const avance = calcPercent(cierre, compromiso);
-      const estado = find("cierre") ? "Completo" : find("corte") ? "Pendiente cierre" : find("compromiso") ? "Pendiente corte" : "Pendiente compromiso";
+      const compromisoRow = find("compromiso");
+      const corteRow = find("corte");
+      const cierreRow = find("cierre");
+      const compromiso = Number(compromisoRow?.cantidad ?? 0);
+      const corte = Number(corteRow?.cantidad ?? 0);
+      const cierre = Number(cierreRow?.cantidad ?? 0);
+      const avance = calcOperationalAdvance({
+        compromiso,
+        corte,
+        cierre,
+        hasCorte: Boolean(corteRow),
+        hasCierre: Boolean(cierreRow),
+      });
+      const estado = cierreRow ? "Completo" : corteRow ? "Pendiente cierre" : compromisoRow ? "Pendiente RAD" : "Pendiente compromiso";
 
       rows.push({
         fecha: fecha ?? find("compromiso")?.fecha ?? find("corte")?.fecha ?? find("cierre")?.fecha ?? "",

@@ -49,7 +49,6 @@ export function getKpiGroup(kpi: Pick<Kpi, "nombre" | "tipo"> & { grupo?: string
 
 export function getOrderedGroupNames(kpis: Array<Pick<Kpi, "nombre" | "tipo"> & { grupo?: string | null }>, extraGroups: string[] = []) {
   const names = new Set<string>();
-  DEFAULT_KPI_GROUPS.forEach((group) => names.add(group));
   extraGroups.map((group) => cleanGroup(group)).filter(Boolean).forEach((group) => names.add(group as string));
   kpis.forEach((kpi) => names.add(getKpiGroup(kpi)));
 
