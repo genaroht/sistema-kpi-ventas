@@ -1,13 +1,19 @@
 export const dynamic = "force-dynamic";
 
 import { PageTitle } from "@/components/admin/page-title";
-import { ReportesClient } from "@/components/admin/reportes/reportes-client";
+import { TablaExcel } from "@/components/admin/tabla/tabla-excel";
+import { requirePanelAccess } from "@/lib/auth";
 
-export default function ReportesPage() {
+export default async function ReportesPage() {
+  const { profile } = await requirePanelAccess();
+
   return (
     <>
-      <PageTitle title="Reportes" description="Consulta resultados por rango de fechas, vendedor, zona y KPI." />
-      <ReportesClient mode="reportes" />
+      <PageTitle
+        title="Reportes"
+        description="Descarga reportes PNG por etapa o trabaja con el detalle completo en Excel."
+      />
+      <TablaExcel role={profile.rol} currentUserId={profile.id} />
     </>
   );
 }

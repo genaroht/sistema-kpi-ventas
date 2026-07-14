@@ -4,13 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import { todayInLima } from "@/lib/utils";
-import type { Kpi, RegistroKpi, Rol, Vendedor } from "@/types/database";
+import type { HabilitacionEtapas, Kpi, RegistroKpi, Rol, Vendedor } from "@/types/database";
 import { VendedorDia } from "@/components/vendedor/vendedor-dia";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-type Payload = { vendedor: Vendedor; fecha: string; kpis: Kpi[]; registros: RegistroKpi[] };
+type Payload = { vendedor: Vendedor; fecha: string; kpis: Kpi[]; registros: RegistroKpi[]; habilitacion: HabilitacionEtapas | null };
 
 type ProfileRole = { activo?: boolean | null; roles?: { codigo?: Rol | null } | null } | null;
 
@@ -61,7 +61,7 @@ export function VendedorLoader() {
       }
 
       const fecha = todayInLima();
-      const [kRes, rRes] = await Promise.all([
+      const [kRes, rRes, hRes] = await Promise.all([
         supabase
           .from("kpis")
           .select("id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at")
@@ -69,12 +69,18 @@ export function VendedorLoader() {
           .eq("activo", true)
           .eq("visible_tabla", true)
           .order("orden"),
-        supabase.from("registros_kpi").select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at").eq("fecha", fecha).eq("vendedor_id", vendedor.id)
+        supabase.from("registros_kpi").select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at").eq("fecha", fecha).eq("vendedor_id", vendedor.id),
+        supabase
+          .from("habilitacion_etapas")
+          .select("id,fecha,jefe_id,compromiso_activo,corte_activo,cierre_activo,updated_by,updated_at")
+          .eq("fecha", fecha)
+          .eq("jefe_id", vendedor.jefe_id)
+          .maybeSingle()
       ]);
 
       if (ignore) return;
 
-      if (kRes.error || rRes.error) {
+      if (kRes.error || rRes.error || hRes.error) {
         setError("No se pudo cargar tu panel. Revisa tu conexión e inténtalo nuevamente.");
         return;
       }
@@ -85,7 +91,13 @@ export function VendedorLoader() {
         return;
       }
 
-      setPayload({ vendedor: vendedor as Vendedor, fecha, kpis, registros: (rRes.data ?? []) as RegistroKpi[] });
+      setPayload({
+        vendedor: vendedor as Vendedor,
+        fecha,
+        kpis,
+        registros: (rRes.data ?? []) as RegistroKpi[],
+        habilitacion: (hRes.data as HabilitacionEtapas | null) ?? null
+      });
     }
 
     load();

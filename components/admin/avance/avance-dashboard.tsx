@@ -25,14 +25,18 @@ import {
 import { buildAvanceRows } from "@/lib/kpi-transform";
 import type { AvanceRow, Kpi, RegistroKpi, Supervisor, Vendedor } from "@/types/database";
 import { ChartCard } from "@/components/charts/chart-card";
+import { Alert } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type TotalsRow = {
+  vendedorId?: string;
   nombre?: string;
   kpi?: string;
   zona?: string;
+  supervisor?: string;
   compromiso: number;
   corte: number;
   cierre: number;
@@ -45,32 +49,33 @@ type TooltipProps<T> = {
   label?: string;
 };
 
+function addDays(date: string, days: number) {
+  const current = new Date(`${date}T00:00:00`);
+  current.setDate(current.getDate() + days);
+  return current.toISOString().slice(0, 10);
+}
+
 function aggregateRows(rows: AvanceRow[]) {
-  const values = rows
-    .map((row) => row.avance)
-    .filter((value): value is number => value !== null);
+  const compromiso = rows.reduce((total, row) => total + row.compromiso, 0);
+  const corte = rows.reduce((total, row) => total + row.corte, 0);
+  const cierre = rows.reduce((total, row) => total + row.cierre, 0);
   return {
-    compromiso: rows.reduce((total, row) => total + row.compromiso, 0),
-    corte: rows.reduce((total, row) => total + row.corte, 0),
-    cierre: rows.reduce((total, row) => total + row.cierre, 0),
-    avance: values.length
-      ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
-      : 0,
+    compromiso,
+    corte,
+    cierre,
+    avance: Math.round(calcPercent(cierre, compromiso) ?? 0),
   };
 }
 
 function TotalsTooltip({ active, payload, label }: TooltipProps<TotalsRow>) {
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
-  const title = row.nombre ?? row.kpi ?? label ?? "Detalle";
-
   return (
     <div className="rounded-2xl border bg-white p-3 text-xs shadow-xl">
-      <p className="font-black text-slate-950">{title}</p>
-      {row.zona ? (
-        <p className="mb-2 font-semibold text-slate-500">Zona {row.zona}</p>
-      ) : null}
-      <div className="space-y-1 font-bold text-slate-700">
+      <p className="font-black text-slate-950">{row.nombre ?? row.kpi ?? label}</p>
+      {row.zona ? <p className="font-semibold text-slate-500">Zona {row.zona}</p> : null}
+      {row.supervisor ? <p className="mb-2 font-semibold text-slate-500">{row.supervisor}</p> : null}
+      <div className="mt-2 space-y-1 font-bold text-slate-700">
         <p>Compromiso: {row.compromiso.toLocaleString("es-PE")}</p>
         <p>Corte: {row.corte.toLocaleString("es-PE")}</p>
         <p>Cierre: {row.cierre.toLocaleString("es-PE")}</p>
@@ -80,64 +85,46 @@ function TotalsTooltip({ active, payload, label }: TooltipProps<TotalsRow>) {
   );
 }
 
-function CompromisoCierreTooltip({
-  active,
-  payload,
-  label,
-}: TooltipProps<{
-  kpi: string;
-  compromiso: number;
-  corte: number;
-  cierre: number;
-}>) {
+function CompromisoCierreTooltip({ active, payload, label }: TooltipProps<TotalsRow>) {
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
-
   return (
     <div className="rounded-2xl border bg-white p-3 text-xs shadow-xl">
       <p className="mb-2 font-black text-slate-950">{row.kpi ?? label}</p>
-      <div className="space-y-1 font-bold text-slate-700">
-        <p>Compromiso: {row.compromiso.toLocaleString("es-PE")}</p>
-        <p>Corte: {row.corte.toLocaleString("es-PE")}</p>
-        <p>Cierre: {row.cierre.toLocaleString("es-PE")}</p>
-      </div>
+      <p className="font-bold text-slate-700">Compromiso: {row.compromiso.toLocaleString("es-PE")}</p>
+      <p className="font-bold text-slate-700">Cierre: {row.cierre.toLocaleString("es-PE")}</p>
     </div>
   );
 }
 
 export function AvanceDashboard() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const [fecha, setFecha] = useState(todayInLima());
-  const [desde, setDesde] = useState(todayInLima());
-  const [hasta, setHasta] = useState(todayInLima());
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [kpis, setKpis] = useState<Kpi[]>([]);
   const [supervisores, setSupervisores] = useState<Supervisor[]>([]);
   const [registros, setRegistros] = useState<RegistroKpi[]>([]);
   const [trendRegistros, setTrendRegistros] = useState<RegistroKpi[]>([]);
-  const [selectedVendedor, setSelectedVendedor] = useState("todos");
-  const [selectedZona, setSelectedZona] = useState("todos");
   const [selectedKpi, setSelectedKpi] = useState("todos");
-  const [selectedSupervisor, setSelectedSupervisor] = useState("todos");
-  const [trendVendedor, setTrendVendedor] = useState("");
-  const [trendKpi, setTrendKpi] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    async function loadBase() {
-      const [vRes, kRes, sRes] = await Promise.all([
+    let ignore = false;
+    async function load() {
+      setLoading(true);
+      setError("");
+      const desde = addDays(fecha, -6);
+      const [vRes, kRes, sRes, dayRes, trendRes] = await Promise.all([
         supabase
           .from("vendedores")
-          .select(
-            "id,usuario_id,jefe_id,nombre,zona,visible_tabla,activo,created_at",
-          )
+          .select("id,usuario_id,jefe_id,nombre,zona,visible_tabla,activo,created_at")
           .eq("activo", true)
           .eq("visible_tabla", true)
           .order("zona"),
         supabase
           .from("kpis")
-          .select(
-            "id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at",
-          )
+          .select("id,jefe_id,nombre,activo,tipo,color,grupo,visible_tabla,orden,created_at")
           .eq("activo", true)
           .eq("visible_tabla", true)
           .order("orden"),
@@ -146,354 +133,202 @@ export function AvanceDashboard() {
           .select("id,usuario_id,codigo_operativo,nombre,activo,created_at")
           .eq("activo", true)
           .order("codigo_operativo"),
+        supabase
+          .from("registros_kpi")
+          .select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at")
+          .eq("fecha", fecha),
+        supabase
+          .from("registros_kpi")
+          .select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at")
+          .gte("fecha", desde)
+          .lte("fecha", fecha),
       ]);
-      const vData = (vRes.data ?? []) as Vendedor[];
-      const kData = (kRes.data ?? []) as Kpi[];
-      setVendedores(vData);
-      setKpis(kData);
+      if (ignore) return;
+      const firstError = vRes.error ?? kRes.error ?? sRes.error ?? dayRes.error ?? trendRes.error;
+      if (firstError) setError("No se pudo cargar la vista de avance.");
+      setVendedores((vRes.data ?? []) as Vendedor[]);
+      setKpis((kRes.data ?? []) as Kpi[]);
       setSupervisores((sRes.data ?? []) as Supervisor[]);
-      setTrendVendedor((prev) => prev || vData[0]?.id || "");
-      setTrendKpi((prev) => prev || kData[0]?.id || "");
+      setRegistros((dayRes.data ?? []) as RegistroKpi[]);
+      setTrendRegistros((trendRes.data ?? []) as RegistroKpi[]);
+      setLoading(false);
     }
-    loadBase();
-  }, [supabase]);
-
-  useEffect(() => {
-    async function loadDaily() {
-      const { data } = await supabase
-        .from("registros_kpi")
-        .select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at")
-        .eq("fecha", fecha);
-      setRegistros((data ?? []) as RegistroKpi[]);
-    }
-    loadDaily();
+    load();
+    return () => {
+      ignore = true;
+    };
   }, [fecha, supabase]);
 
   useEffect(() => {
-    async function loadTrend() {
-      const { data } = await supabase
-        .from("registros_kpi")
-        .select("id,fecha,vendedor_id,kpi_id,etapa,cantidad,created_at")
-        .gte("fecha", desde)
-        .lte("fecha", hasta);
-      setTrendRegistros((data ?? []) as RegistroKpi[]);
+    if (selectedKpi !== "todos" && !kpis.some((kpi) => kpi.id === selectedKpi)) {
+      setSelectedKpi("todos");
     }
-    loadTrend();
-  }, [desde, hasta, supabase]);
+  }, [kpis, selectedKpi]);
 
-  const scopedVendedores = useMemo(
-    () => vendedores.filter((item) => selectedSupervisor === "todos" || item.jefe_id === selectedSupervisor),
-    [selectedSupervisor, vendedores],
+  const filteredKpis = useMemo(
+    () => (selectedKpi === "todos" ? kpis : kpis.filter((kpi) => kpi.id === selectedKpi)),
+    [kpis, selectedKpi],
   );
 
-  const scopedKpis = useMemo(
-    () => kpis.filter((item) => selectedSupervisor === "todos" || item.jefe_id === selectedSupervisor),
-    [kpis, selectedSupervisor],
+  const selectedOwner = selectedKpi === "todos" ? null : filteredKpis[0]?.jefe_id ?? null;
+  const filteredVendedores = useMemo(
+    () => vendedores.filter((vendedor) => !selectedOwner || vendedor.jefe_id === selectedOwner),
+    [selectedOwner, vendedores],
   );
-
-  const trendKpisForVendor = useMemo(() => {
-    const ownerId = scopedVendedores.find((item) => item.id === trendVendedor)?.jefe_id;
-    return ownerId ? scopedKpis.filter((item) => item.jefe_id === ownerId) : [];
-  }, [scopedKpis, scopedVendedores, trendVendedor]);
-
-  useEffect(() => {
-    const firstVendor = scopedVendedores[0]?.id ?? "";
-    const firstKpi = trendKpisForVendor[0]?.id ?? "";
-    if (!scopedVendedores.some((item) => item.id === trendVendedor)) setTrendVendedor(firstVendor);
-    if (!trendKpisForVendor.some((item) => item.id === trendKpi)) setTrendKpi(firstKpi);
-    if (selectedVendedor !== "todos" && !scopedVendedores.some((item) => item.id === selectedVendedor)) setSelectedVendedor("todos");
-    if (selectedKpi !== "todos" && !scopedKpis.some((item) => item.id === selectedKpi)) setSelectedKpi("todos");
-  }, [scopedKpis, scopedVendedores, selectedKpi, selectedVendedor, trendKpi, trendKpisForVendor, trendVendedor]);
 
   const rows = useMemo(
-    () => buildAvanceRows({ fecha, vendedores: scopedVendedores, kpis: scopedKpis, registros }),
-    [fecha, scopedVendedores, scopedKpis, registros],
-  );
-  const zonas = useMemo(
-    () => [...new Set(scopedVendedores.map((v) => v.zona))].sort(),
-    [scopedVendedores],
+    () => buildAvanceRows({ fecha, vendedores: filteredVendedores, kpis: filteredKpis, registros }),
+    [fecha, filteredKpis, filteredVendedores, registros],
   );
 
-  const filteredRows = useMemo(
-    () =>
-      rows.filter((row) => {
-        if (
-          selectedVendedor !== "todos" &&
-          row.vendedor_id !== selectedVendedor
-        )
-          return false;
-        if (selectedZona !== "todos" && row.zona !== selectedZona) return false;
-        if (selectedKpi !== "todos" && row.kpi_id !== selectedKpi) return false;
-        return true;
-      }),
-    [rows, selectedKpi, selectedVendedor, selectedZona],
+  const supervisorMap = useMemo(
+    () => new Map(supervisores.map((item) => [item.usuario_id, `${item.codigo_operativo} · ${item.nombre}`])),
+    [supervisores],
   );
 
   const avancePorVendedor = useMemo<TotalsRow[]>(
-    () => {
-      const selectedKpiOwner = selectedKpi === "todos"
-        ? null
-        : scopedKpis.find((item) => item.id === selectedKpi)?.jefe_id;
-      return scopedVendedores
-        .filter((v) => !selectedKpiOwner || v.jefe_id === selectedKpiOwner)
-        .filter((v) => selectedZona === "todos" || v.zona === selectedZona)
-        .map((v) => {
-          const vendorRows = rows.filter(
-            (row) =>
-              row.vendedor_id === v.id &&
-              (selectedKpi === "todos" || row.kpi_id === selectedKpi),
-          );
-          return {
-            nombre: v.nombre,
-            zona: v.zona,
-            ...aggregateRows(vendorRows),
-          };
-        })
-        .sort((a, b) => b.avance - a.avance);
-    },
-    [rows, scopedKpis, scopedVendedores, selectedKpi, selectedZona],
+    () =>
+      filteredVendedores
+        .map((vendedor) => ({
+          vendedorId: vendedor.id,
+          nombre: vendedor.nombre,
+          zona: vendedor.zona,
+          supervisor: supervisorMap.get(vendedor.jefe_id),
+          ...aggregateRows(rows.filter((row) => row.vendedor_id === vendedor.id)),
+        }))
+        .sort((a, b) => b.avance - a.avance || (a.nombre ?? "").localeCompare(b.nombre ?? "", "es")),
+    [filteredVendedores, rows, supervisorMap],
   );
 
-  const incumplimientoKpi = useMemo<TotalsRow[]>(
-    () => {
-      const selectedVendorOwner = selectedVendedor === "todos"
-        ? null
-        : scopedVendedores.find((item) => item.id === selectedVendedor)?.jefe_id;
-      return scopedKpis
-        .filter((kpi) => !selectedVendorOwner || kpi.jefe_id === selectedVendorOwner)
-        .map((kpi) => {
-          const kpiRows = rows.filter(
-            (row) =>
-              row.kpi_id === kpi.id &&
-              (selectedZona === "todos" || row.zona === selectedZona) &&
-              (selectedVendedor === "todos" ||
-                row.vendedor_id === selectedVendedor),
-          );
-          return { kpi: kpi.nombre, ...aggregateRows(kpiRows) };
-        })
-        .sort((a, b) => a.avance - b.avance)
-        .slice(0, 8);
-    },
-    [rows, scopedKpis, scopedVendedores, selectedVendedor, selectedZona],
+  const compromisoVsCierre = useMemo<TotalsRow[]>(
+    () =>
+      filteredKpis.map((kpi) => ({
+        kpi: kpi.nombre,
+        supervisor: supervisorMap.get(kpi.jefe_id),
+        ...aggregateRows(rows.filter((row) => row.kpi_id === kpi.id)),
+      })),
+    [filteredKpis, rows, supervisorMap],
   );
 
-  const compromisoVsCierre = useMemo(
-    () => [
-      ...filteredRows
-        .reduce((acc, row) => {
-          const current = acc.get(row.kpi) ?? {
-            kpi: row.kpi,
-            compromiso: 0,
-            corte: 0,
-            cierre: 0,
-          };
-          current.compromiso += row.compromiso;
-          current.corte += row.corte;
-          current.cierre += row.cierre;
-          acc.set(row.kpi, current);
-          return acc;
-        }, new Map<string, { kpi: string; compromiso: number; corte: number; cierre: number }>())
-        .values(),
-    ],
-    [filteredRows],
+  const daySummary = useMemo(() => aggregateRows(rows), [rows]);
+
+  const heatmapGroups = useMemo(
+    () =>
+      supervisores
+        .map((supervisor) => ({
+          supervisor,
+          vendedores: filteredVendedores.filter((vendedor) => vendedor.jefe_id === supervisor.usuario_id),
+          kpis: filteredKpis.filter((kpi) => kpi.jefe_id === supervisor.usuario_id),
+        }))
+        .filter((group) => group.vendedores.length > 0 && group.kpis.length > 0),
+    [filteredKpis, filteredVendedores, supervisores],
   );
 
   const trendRows = useMemo(() => {
-    if (!trendVendedor || !trendKpi) return [];
-    const dates = [...new Set(trendRegistros.map((r) => r.fecha))].sort();
+    const dates = Array.from({ length: 7 }, (_, index) => addDays(fecha, index - 6));
     return dates.map((date) => {
-      const list = trendRegistros.filter(
-        (r) =>
-          r.fecha === date &&
-          r.vendedor_id === trendVendedor &&
-          r.kpi_id === trendKpi,
-      );
-      const compromiso =
-        list.find((r) => r.etapa === "compromiso")?.cantidad ?? 0;
-      const cierre = list.find((r) => r.etapa === "cierre")?.cantidad ?? 0;
-      return {
+      const dateRegistros = trendRegistros.filter((row) => row.fecha === date);
+      const dateRows = buildAvanceRows({
         fecha: date,
-        avance: Math.round(calcPercent(cierre, compromiso) ?? 0),
+        vendedores: filteredVendedores,
+        kpis: filteredKpis,
+        registros: dateRegistros,
+      });
+      const totals = aggregateRows(dateRows);
+      return {
+        fecha: date.slice(5).split("-").reverse().join("/"),
+        avance: totals.avance,
+        compromiso: totals.compromiso,
+        cierre: totals.cierre,
       };
     });
-  }, [trendRegistros, trendVendedor, trendKpi]);
-
-  const daySummary = useMemo(() => {
-    const compromiso = filteredRows.reduce((total, row) => total + row.compromiso, 0);
-    const cierre = filteredRows.reduce((total, row) => total + row.cierre, 0);
-    return { cierre, alcance: calcPercent(cierre, compromiso) };
-  }, [filteredRows]);
+  }, [fecha, filteredKpis, filteredVendedores, trendRegistros]);
 
   return (
     <div className="space-y-5">
       <Card>
-        <CardContent className="grid gap-3 pt-5 md:grid-cols-3 xl:grid-cols-5">
-          <Input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-          />
-          <Select
-            value={selectedSupervisor}
-            onChange={(e) => {
-              setSelectedSupervisor(e.target.value);
-              setSelectedZona("todos");
-              setSelectedVendedor("todos");
-              setSelectedKpi("todos");
-            }}
-          >
-            <option value="todos">Todos los supervisores</option>
-            {supervisores.map((supervisor) => (
-              <option key={supervisor.usuario_id} value={supervisor.usuario_id}>
-                {supervisor.codigo_operativo} · {supervisor.nombre}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={selectedZona}
-            onChange={(e) => setSelectedZona(e.target.value)}
-          >
-            <option value="todos">Todas las zonas</option>
-            {zonas.map((z) => (
-              <option key={z} value={z}>
-                {z}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={selectedVendedor}
-            onChange={(e) => setSelectedVendedor(e.target.value)}
-          >
-            <option value="todos">Todos los vendedores</option>
-            {scopedVendedores.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.nombre}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={selectedKpi}
-            onChange={(e) => setSelectedKpi(e.target.value)}
-          >
-            <option value="todos">Todos los KPI</option>
-            {scopedKpis.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.nombre}
-              </option>
-            ))}
-          </Select>
+        <CardContent className="grid gap-3 pt-5 md:grid-cols-2">
+          <div>
+            <label htmlFor="advance-date" className="text-xs font-black text-slate-600">Fecha</label>
+            <Input
+              id="advance-date"
+              type="date"
+              value={fecha}
+              onChange={(event) => setFecha(event.target.value)}
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <label htmlFor="advance-kpi" className="text-xs font-black text-slate-600">KPI</label>
+            <Select
+              id="advance-kpi"
+              value={selectedKpi}
+              onChange={(event) => setSelectedKpi(event.target.value)}
+              className="mt-1"
+            >
+              <option value="todos">Todos los KPI</option>
+              {kpis.map((kpi) => (
+                <option key={kpi.id} value={kpi.id}>
+                  {supervisores.length > 1 ? `${supervisorMap.get(kpi.jefe_id) ?? "Supervisor"} · ` : ""}
+                  {kpi.nombre}
+                </option>
+              ))}
+            </Select>
+          </div>
         </CardContent>
       </Card>
+
+      {error ? <Alert tone="error">{error}</Alert> : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
           <CardContent className="pt-5">
             <p className="text-sm font-bold text-slate-500">Cierre del día</p>
-            <p className="mt-1 text-3xl font-black text-slate-950">{daySummary.cierre.toLocaleString("es-PE")}</p>
+            {loading ? <Skeleton className="mt-2 h-9 w-32" /> : <p className="mt-1 text-3xl font-black text-slate-950">{daySummary.cierre.toLocaleString("es-PE")}</p>}
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-5">
             <p className="text-sm font-bold text-slate-500">Alcance %</p>
-            <p className="mt-1 text-3xl font-black text-blue-700">{formatPercent(daySummary.alcance)}</p>
+            {loading ? <Skeleton className="mt-2 h-9 w-40" /> : <p className="mt-1 text-3xl font-black text-blue-700">{formatPercent(calcPercent(daySummary.cierre, daySummary.compromiso))}</p>}
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        <ChartCard
-          title="Avance por vendedor"
-          description="Pasa el cursor para ver compromiso, corte, cierre y avance."
-        >
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={avancePorVendedor}
-                layout="vertical"
-                margin={{ left: 20, right: 30 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" domain={[0, "dataMax"]} unit="%" />
-                <YAxis dataKey="nombre" type="category" width={110} />
-                <Tooltip content={<TotalsTooltip />} />
-                <Bar dataKey="avance" radius={[0, 8, 8, 0]}>
-                  {avancePorVendedor.map((entry) => (
-                    <Cell
-                      key={entry.nombre}
-                      className={
-                        entry.avance < 51
-                          ? "fill-red-500"
-                          : entry.avance < 86
-                            ? "fill-yellow-500"
-                            : "fill-green-500"
-                      }
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </ChartCard>
-
-        <ChartCard
-          title="KPI con mayor incumplimiento"
-          description="Pasa el cursor para ver compromiso, corte, cierre y avance."
-        >
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={incumplimientoKpi}
-                layout="vertical"
-                margin={{ left: 20, right: 30 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" unit="%" />
-                <YAxis dataKey="kpi" type="category" width={140} />
-                <Tooltip content={<TotalsTooltip />} />
-                <Bar dataKey="avance" radius={[0, 8, 8, 0]}>
-                  {incumplimientoKpi.map((entry) => (
-                    <Cell
-                      key={entry.kpi}
-                      className={
-                        entry.avance < 51
-                          ? "fill-red-500"
-                          : entry.avance < 86
-                            ? "fill-yellow-500"
-                            : "fill-green-500"
-                      }
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </ChartCard>
-      </div>
+      <ChartCard title="Avance por vendedor" description="Cumplimiento del día para el KPI seleccionado.">
+        <div className="h-[420px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={avancePorVendedor} layout="vertical" margin={{ left: 20, right: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" domain={[0, "dataMax"]} unit="%" />
+              <YAxis dataKey="nombre" type="category" width={130} tick={{ fontSize: 12 }} />
+              <Tooltip content={<TotalsTooltip />} />
+              <Bar dataKey="avance" radius={[0, 8, 8, 0]}>
+                {avancePorVendedor.map((entry) => (
+                  <Cell
+                    key={entry.vendedorId}
+                    className={entry.avance < 51 ? "fill-red-500" : entry.avance < 86 ? "fill-yellow-500" : "fill-green-500"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </ChartCard>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <ChartCard
-          title="Ranking de vendedores"
-          description="Ordenado de mayor a menor cumplimiento."
-        >
-          <div className="space-y-2">
+        <ChartCard title="Ranking de vendedores" description="Ordenado de mayor a menor cumplimiento.">
+          <div className="max-h-[430px] space-y-2 overflow-auto pr-1">
             {avancePorVendedor.map((item, index) => (
-              <div
-                key={item.nombre}
-                className="flex items-center justify-between gap-3 rounded-xl border bg-white p-3"
-                title={`Compromiso: ${item.compromiso} · Corte: ${item.corte} · Cierre: ${item.cierre} · Avance: ${item.avance}%`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 font-black">
-                    {index + 1}
-                  </span>
-                  <div>
-                    <p className="font-bold">{item.nombre}</p>
-                    <p className="text-xs text-slate-500">{item.zona}</p>
+              <div key={item.vendedorId} className="flex items-center justify-between gap-3 rounded-xl border bg-white p-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 font-black">{index + 1}</span>
+                  <div className="min-w-0">
+                    <p className="truncate font-bold">{item.nombre}</p>
+                    <p className="truncate text-xs text-slate-500">{item.zona} · {item.supervisor}</p>
                   </div>
                 </div>
-                <span
-                  className={`rounded-full border px-2 py-1 text-xs font-black ${advanceTone(item.avance)}`}
-                >
+                <span className={`shrink-0 rounded-full border px-2 py-1 text-xs font-black ${advanceTone(item.avance)}`}>
                   {advanceLabel(item.avance)}
                 </span>
               </div>
@@ -501,128 +336,67 @@ export function AvanceDashboard() {
           </div>
         </ChartCard>
 
-        <ChartCard
-          title="Compromiso vs cierre"
-          description="Comparación agregada por KPI con colores distintos."
-        >
-          <div className="h-96">
+        <ChartCard title="Compromiso vs cierre" description="Comparación agregada por KPI.">
+          <div className="h-[430px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={compromisoVsCierre}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="kpi"
-                  tick={{ fontSize: 11 }}
-                  interval={0}
-                  angle={-30}
-                  textAnchor="end"
-                  height={90}
-                />
+                <XAxis dataKey="kpi" tick={{ fontSize: 11 }} interval={0} angle={-30} textAnchor="end" height={100} />
                 <YAxis />
                 <Tooltip content={<CompromisoCierreTooltip />} />
                 <Legend />
-                <Bar
-                  dataKey="compromiso"
-                  name="Compromiso"
-                  fill="#1d4ed8"
-                  radius={[8, 8, 0, 0]}
-                />
-                <Bar
-                  dataKey="cierre"
-                  name="Cierre"
-                  fill="#f59e0b"
-                  radius={[8, 8, 0, 0]}
-                />
+                <Bar dataKey="compromiso" name="Compromiso" fill="#1d4ed8" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="cierre" name="Cierre" fill="#f59e0b" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </ChartCard>
       </div>
 
-      <ChartCard
-        title="Mapa de calor KPI x vendedor"
-        description="Rojo bajo, amarillo medio y verde cumplido."
-      >
-        {selectedSupervisor === "todos" ? (
-          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">
-            Selecciona un supervisor para ver el mapa de calor sin mezclar KPI de equipos diferentes.
+      <ChartCard title="Mapa de calor KPI x vendedor" description="Vista global separada por supervisor.">
+        {heatmapGroups.length === 0 ? (
+          <Alert tone="warning">No hay datos visibles para construir el mapa de calor.</Alert>
+        ) : (
+          <div className="space-y-5">
+            {heatmapGroups.map(({ supervisor, vendedores: teamVendedores, kpis: teamKpis }) => (
+              <section key={supervisor.usuario_id} className="overflow-hidden rounded-2xl border">
+                <div className="bg-slate-100 px-4 py-3 font-black text-slate-800">
+                  {supervisor.codigo_operativo} · {supervisor.nombre}
+                </div>
+                <div className="kpi-scrollbar overflow-auto">
+                  <table className="min-w-max border-separate border-spacing-0 text-xs">
+                    <thead>
+                      <tr>
+                        <th className="sticky left-0 z-10 bg-white p-2 text-left">Vendedor</th>
+                        {teamKpis.map((kpi) => <th key={kpi.id} className="p-2 text-left">{kpi.nombre}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teamVendedores.map((vendedor) => (
+                        <tr key={vendedor.id}>
+                          <td className="sticky left-0 z-10 border-t bg-white p-2 font-bold">{vendedor.nombre}</td>
+                          {teamKpis.map((kpi) => {
+                            const value = rows.find((row) => row.vendedor_id === vendedor.id && row.kpi_id === kpi.id)?.avance;
+                            return (
+                              <td key={kpi.id} className="border-t p-2">
+                                <span className={`block rounded-lg border px-2 py-1 text-center font-black ${advanceTone(value)}`}>
+                                  {value == null ? "SC" : Math.round(value)}
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
           </div>
-        ) : <div className="kpi-scrollbar overflow-auto">
-          <table className="min-w-max border-separate border-spacing-0 text-xs">
-            <thead>
-              <tr>
-                <th className="sticky left-0 z-10 bg-white p-2 text-left">
-                  Vendedor
-                </th>
-                {scopedKpis.map((k) => (
-                  <th key={k.id} className="p-2 text-left">
-                    {k.nombre}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {scopedVendedores.map((v) => (
-                <tr key={v.id}>
-                  <td className="sticky left-0 z-10 border-t bg-white p-2 font-bold">
-                    {v.nombre}
-                  </td>
-                  {scopedKpis.map((k) => {
-                    const value = rows.find(
-                      (r) => r.vendedor_id === v.id && r.kpi_id === k.id,
-                    )?.avance;
-                    return (
-                      <td key={k.id} className="border-t p-2">
-                        <span
-                          className={`block rounded-lg border px-2 py-1 text-center font-black ${advanceTone(value)}`}
-                        >
-                          {value == null ? "SC" : Math.round(value)}
-                        </span>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>}
+        )}
       </ChartCard>
 
-      <ChartCard
-        title="Tendencia por días"
-        description="Selecciona vendedor y KPI para ver evolución del % de avance."
-      >
-        <div className="mb-4 grid gap-3 md:grid-cols-4">
-          <Input
-            type="date"
-            value={desde}
-            onChange={(e) => setDesde(e.target.value)}
-          />
-          <Input
-            type="date"
-            value={hasta}
-            onChange={(e) => setHasta(e.target.value)}
-          />
-          <Select
-            value={trendVendedor}
-            onChange={(e) => setTrendVendedor(e.target.value)}
-          >
-            {scopedVendedores.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.nombre}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={trendKpi}
-            onChange={(e) => setTrendKpi(e.target.value)}
-          >
-            {trendKpisForVendor.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.nombre}
-              </option>
-            ))}
-          </Select>
-        </div>
+      <ChartCard title="Tendencia por días" description="Evolución de los últimos 7 días hasta la fecha seleccionada.">
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={trendRows}>
@@ -630,7 +404,7 @@ export function AvanceDashboard() {
               <XAxis dataKey="fecha" />
               <YAxis unit="%" />
               <Tooltip formatter={(value) => `${value}%`} />
-              <Line type="monotone" dataKey="avance" strokeWidth={3} dot />
+              <Line type="monotone" dataKey="avance" name="Avance" strokeWidth={3} dot />
             </LineChart>
           </ResponsiveContainer>
         </div>

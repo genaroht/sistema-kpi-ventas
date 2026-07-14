@@ -189,8 +189,8 @@ export function VendedoresManager() {
       error
         ? error.message
         : nextVisible
-          ? "El vendedor vuelve a mostrarse en la Tabla Excel."
-          : "El vendedor quedó oculto de la Tabla Excel sin perder su historial.",
+          ? "El vendedor vuelve a mostrarse en la Reportes."
+          : "El vendedor quedó oculto de la Reportes sin perder su historial.",
     );
     if (!error) await load();
   }
@@ -215,7 +215,7 @@ export function VendedoresManager() {
 
           <p className="rounded-xl bg-blue-50 p-3 text-xs font-semibold text-blue-700">
             Las acciones Editar y Ocultar permanecen visibles al lado derecho de
-            cada vendedor. Ocultar solo lo retira de la Tabla Excel y conserva
+            cada vendedor. Ocultar solo lo retira de la Reportes y conserva
             todo su historial.
           </p>
 
@@ -279,7 +279,7 @@ export function VendedoresManager() {
                 setForm({ ...form, visible_tabla: event.target.checked })
               }
             />
-            Mostrar en Tabla Excel
+            Mostrar en Reportes
           </label>
 
           <label className="flex items-center gap-2 text-sm font-semibold">
@@ -329,7 +329,7 @@ export function VendedoresManager() {
                   <th className="p-3 text-left">Supervisor</th>
                   <th className="p-3 text-left">Zona</th>
                   <th className="p-3 text-left">Vendedor</th>
-                  <th className="p-3 text-left">Tabla Excel</th>
+                  <th className="p-3 text-left">Reportes</th>
                   <th className="p-3 text-left">Estado</th>
                   <th className="sticky right-0 z-10 min-w-[255px] border-l bg-slate-50 p-3 text-right shadow-[-8px_0_14px_-12px_rgba(15,23,42,0.55)]">
                     Acciones

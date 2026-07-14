@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Download, FileSpreadsheet, Home, LineChart, LogOut, Menu, ShieldCheck, Target, UserCog, Users, X } from "lucide-react";
+import { FileSpreadsheet, Home, LineChart, LogOut, Menu, ShieldCheck, Target, UserCog, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
@@ -13,13 +13,11 @@ import { roleLabelWithCode } from "@/lib/display-labels";
 
 const baseNav = [
   { href: "/admin/dashboard", label: "Dashboard", icon: Home, adminOnly: false, managerVisible: true },
-  { href: "/admin/tabla", label: "Tabla Excel", icon: FileSpreadsheet, adminOnly: false, managerVisible: true },
+  { href: "/admin/reportes", label: "Reportes", icon: FileSpreadsheet, adminOnly: false, managerVisible: true },
   { href: "/admin/avance", label: "Avance %", icon: LineChart, adminOnly: false, managerVisible: true },
   { href: "/admin/supervisores", label: "Supervisores", icon: ShieldCheck, adminOnly: true, managerVisible: false },
   { href: "/admin/vendedores", label: "Vendedores", icon: Users, adminOnly: false, managerVisible: false },
   { href: "/admin/kpis", label: "KPI", icon: Target, adminOnly: false, managerVisible: false },
-  { href: "/admin/reportes", label: "Reportes", icon: LineChart, adminOnly: false, managerVisible: true },
-  { href: "/admin/exportar", label: "Exportar", icon: Download, adminOnly: false, managerVisible: false },
   { href: "/admin/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true, managerVisible: false }
 ];
 
@@ -145,7 +143,7 @@ export function AdminShell({ children, profileName }: { children: React.ReactNod
           const active = pathname === item.href;
           return (
             <Link key={item.href} href={item.href} className={cn("flex flex-col items-center gap-1 rounded-xl px-1 py-2 text-[10px] font-bold", active ? "bg-blue-950 text-yellow-300" : "text-slate-500")}> 
-              <Icon className="h-4 w-4" /> {item.label.replace("Tabla Excel", "Tabla")}
+              <Icon className="h-4 w-4" /> {item.label}
             </Link>
           );
         })}

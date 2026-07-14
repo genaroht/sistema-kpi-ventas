@@ -3,16 +3,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type SVGProps } from "react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   Activity,
   ArrowDownRight,
   ArrowRight,
@@ -42,6 +32,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { StageControl } from "@/components/admin/stages/stage-control";
 import { Alert } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
@@ -60,18 +51,7 @@ type VendorProgressRow = OperativeTotals & {
   vendedorId: string;
   nombre: string;
   zona: string;
-};
-
-type TooltipPayload<T> = Array<{
-  payload: T;
-  name?: string;
-  value?: number | string;
-}>;
-
-type TooltipProps<T> = {
-  active?: boolean;
-  payload?: TooltipPayload<T>;
-  label?: string;
+  supervisor?: string;
 };
 
 function addDays(date: string, days: number) {
@@ -162,27 +142,6 @@ function NumberPill({ label, value }: { label: string; value: number }) {
   );
 }
 
-function VendorTotalsTooltip({
-  active,
-  payload,
-}: TooltipProps<VendorProgressRow>) {
-  const row = payload?.[0]?.payload;
-  if (!active || !row) return null;
-
-  return (
-    <div className="rounded-2xl border bg-white p-3 text-xs shadow-xl">
-      <p className="font-black text-slate-950">{row.nombre}</p>
-      <p className="mb-2 font-semibold text-slate-500">Zona {row.zona}</p>
-      <div className="space-y-1 font-bold text-slate-700">
-        <p>Compromiso: {row.compromiso.toLocaleString("es-PE")}</p>
-        <p>Corte: {row.corte.toLocaleString("es-PE")}</p>
-        <p>Cierre: {row.cierre.toLocaleString("es-PE")}</p>
-        <p className="text-blue-700">Avance: {row.avance}%</p>
-      </div>
-    </div>
-  );
-}
-
 export function AdminDashboard() {
   const supabase = useMemo(() => createClient(), []);
   const [fecha, setFecha] = useState(todayInLima());
@@ -192,7 +151,6 @@ export function AdminDashboard() {
   const [registros, setRegistros] = useState<RegistroKpi[]>([]);
   const [previousRegistros, setPreviousRegistros] = useState<RegistroKpi[]>([]);
   const [selectedKpiId, setSelectedKpiId] = useState("todos");
-  const [selectedSupervisorId, setSelectedSupervisorId] = useState("todos");
   const [currentRole, setCurrentRole] = useState<Rol | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -261,15 +219,8 @@ export function AdminDashboard() {
     };
   }, [fecha, supabase]);
 
-  const scopedVendedores = useMemo(
-    () => vendedores.filter((item) => selectedSupervisorId === "todos" || item.jefe_id === selectedSupervisorId),
-    [selectedSupervisorId, vendedores],
-  );
-
-  const scopedKpis = useMemo(
-    () => kpis.filter((item) => selectedSupervisorId === "todos" || item.jefe_id === selectedSupervisorId),
-    [kpis, selectedSupervisorId],
-  );
+  const scopedVendedores = vendedores;
+  const scopedKpis = kpis;
 
   const filteredKpis = useMemo(
     () =>
@@ -340,6 +291,7 @@ export function AdminDashboard() {
         vendedorId: vendedor.id,
         nombre: vendedor.nombre,
         zona: vendedor.zona,
+        supervisor: supervisores.find((item) => item.usuario_id === vendedor.jefe_id)?.codigo_operativo,
         ...totalsForVendor(vendedor, filteredKpis, registros),
       }))
       .sort(
@@ -348,19 +300,8 @@ export function AdminDashboard() {
           a.zona.localeCompare(b.zona) ||
           a.nombre.localeCompare(b.nombre),
       );
-  }, [dashboardVendedores, filteredKpis, registros]);
+  }, [dashboardVendedores, filteredKpis, registros, supervisores]);
 
-  const avancePorVendedor = useMemo<VendorProgressRow[]>(() => {
-    return dashboardVendedores
-      .map((vendedor) => ({
-        vendedorId: vendedor.id,
-        nombre: vendedor.nombre,
-        zona: vendedor.zona,
-        ...totalsForVendor(vendedor, filteredKpis, registros),
-      }))
-      .sort((a, b) => a.avance - b.avance)
-      .slice(0, 12);
-  }, [dashboardVendedores, filteredKpis, registros]);
 
   const cards = [
     {
@@ -384,7 +325,7 @@ export function AdminDashboard() {
       title: "Registros completos",
       value: metrics.completos,
       icon: CheckCircle2,
-      href: `/admin/tabla?fecha=${fecha}&estado=Completo`,
+      href: `/admin/reportes?fecha=${fecha}`,
       tone: metrics.completos
         ? "border-green-200 bg-green-50"
         : "border-slate-200 bg-white",
@@ -393,7 +334,7 @@ export function AdminDashboard() {
       title: "Pend. compromiso",
       value: metrics.pendienteCompromiso,
       icon: Clock,
-      href: `/admin/tabla?fecha=${fecha}&estado=Pendiente%20compromiso`,
+      href: `/admin/reportes?fecha=${fecha}`,
       tone: metrics.pendienteCompromiso
         ? "border-red-200 bg-red-50"
         : "border-green-200 bg-green-50",
@@ -402,7 +343,7 @@ export function AdminDashboard() {
       title: "Pend. corte",
       value: metrics.pendienteCorte,
       icon: Activity,
-      href: `/admin/tabla?fecha=${fecha}&estado=Pendiente%20corte`,
+      href: `/admin/reportes?fecha=${fecha}`,
       tone: metrics.pendienteCorte
         ? "border-yellow-200 bg-yellow-50"
         : "border-slate-200 bg-white",
@@ -411,7 +352,7 @@ export function AdminDashboard() {
       title: "Pend. cierre",
       value: metrics.pendienteCierre,
       icon: TrendingUp,
-      href: `/admin/tabla?fecha=${fecha}&estado=Pendiente%20cierre`,
+      href: `/admin/reportes?fecha=${fecha}`,
       tone: metrics.pendienteCierre
         ? "border-yellow-200 bg-yellow-50"
         : "border-slate-200 bg-white",
@@ -429,7 +370,7 @@ export function AdminDashboard() {
     <div className="space-y-5">
       <div className="rounded-2xl border bg-white p-4 shadow-soft">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-          <div className="grid gap-3 sm:grid-cols-2 lg:max-w-4xl xl:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:max-w-3xl">
             <div>
               <label htmlFor="dashboard-date" className="text-sm font-black">
                 Fecha operativa
@@ -441,27 +382,6 @@ export function AdminDashboard() {
                 onChange={(event) => setFecha(event.target.value)}
                 className="mt-2"
               />
-            </div>
-            <div>
-              <label htmlFor="dashboard-supervisor" className="text-sm font-black">
-                Supervisor
-              </label>
-              <Select
-                id="dashboard-supervisor"
-                value={selectedSupervisorId}
-                onChange={(event) => {
-                  setSelectedSupervisorId(event.target.value);
-                  setSelectedKpiId("todos");
-                }}
-                className="mt-2"
-              >
-                <option value="todos">Todos los supervisores</option>
-                {supervisores.map((supervisor) => (
-                  <option key={supervisor.usuario_id} value={supervisor.usuario_id}>
-                    {supervisor.codigo_operativo} · {supervisor.nombre}
-                  </option>
-                ))}
-              </Select>
             </div>
             <div>
               <label htmlFor="dashboard-kpi" className="text-sm font-black">
@@ -476,7 +396,7 @@ export function AdminDashboard() {
                 <option value="todos">Todos los KPI visibles</option>
                 {scopedKpis.map((kpi) => (
                   <option key={kpi.id} value={kpi.id}>
-                    {kpi.nombre}
+                    {supervisores.length > 1 ? `${supervisores.find((item) => item.usuario_id === kpi.jefe_id)?.codigo_operativo ?? "Supervisor"} · ` : ""}{kpi.nombre}
                   </option>
                 ))}
               </Select>
@@ -515,6 +435,8 @@ export function AdminDashboard() {
       </div>
 
       {error ? <Alert tone="error">{error}</Alert> : null}
+
+      <StageControl fecha={fecha} role={currentRole} supervisores={supervisores} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => {
@@ -580,7 +502,7 @@ export function AdminDashboard() {
                         {item.zona}
                       </p>
                       <p className="truncate text-xs font-semibold text-slate-500">
-                        {item.nombre}
+                        {item.nombre}{item.supervisor ? ` · ${item.supervisor}` : ""}
                       </p>
                     </div>
                     <Progress
@@ -619,7 +541,7 @@ export function AdminDashboard() {
             {metrics.vendorStatus.slice(0, 10).map(({ vendedor, status }) => (
               <Link
                 key={vendedor.id}
-                href={`/admin/tabla?fecha=${fecha}&vendedor=${vendedor.id}`}
+                href={`/admin/reportes?fecha=${fecha}`}
                 className="flex items-center justify-between gap-3 rounded-xl border bg-white p-3 transition hover:bg-blue-50"
               >
                 <div className="min-w-0">
@@ -627,7 +549,7 @@ export function AdminDashboard() {
                     {vendedor.nombre}
                   </p>
                   <p className="text-xs font-semibold text-slate-500">
-                    {vendedor.zona}
+                    {vendedor.zona}{supervisores.length > 1 ? ` · ${supervisores.find((item) => item.usuario_id === vendedor.jefe_id)?.codigo_operativo ?? ""}` : ""}
                   </p>
                 </div>
                 <Badge
@@ -647,49 +569,6 @@ export function AdminDashboard() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Vendedores con menor avance</CardTitle>
-          <CardDescription>
-            Pasa el cursor para ver compromiso, corte, cierre y avance.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={avancePorVendedor}
-                layout="vertical"
-                margin={{ left: 12, right: 28 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" unit="%" domain={[0, "dataMax"]} />
-                <YAxis
-                  dataKey="nombre"
-                  type="category"
-                  width={130}
-                  tick={{ fontSize: 12 }}
-                />
-                <Tooltip content={<VendorTotalsTooltip />} />
-                <Bar dataKey="avance" radius={[0, 8, 8, 0]}>
-                  {avancePorVendedor.map((entry) => (
-                    <Cell
-                      key={entry.nombre}
-                      className={
-                        entry.avance <= 50
-                          ? "fill-red-500"
-                          : entry.avance <= 85
-                            ? "fill-yellow-500"
-                            : "fill-green-500"
-                      }
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

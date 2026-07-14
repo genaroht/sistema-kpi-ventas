@@ -24,6 +24,7 @@ drop function if exists public.setup_jefe_julio(text,text) cascade;
 drop function if exists public.setup_vendedor_demo(text,text,text,text,text) cascade;
 
 drop table if exists public.registros_kpi cascade;
+drop table if exists public.habilitacion_etapas cascade;
 drop table if exists public.kpi_grupos cascade;
 drop table if exists public.kpis cascade;
 drop table if exists public.vendedores cascade;
@@ -118,6 +119,18 @@ create table public.kpi_grupos (
   constraint kpi_grupos_nombre_not_empty check (length(trim(nombre)) > 0)
 );
 
+create table public.habilitacion_etapas (
+  id uuid primary key default gen_random_uuid(),
+  fecha date not null,
+  jefe_id uuid not null references public.usuarios(id) on delete cascade,
+  compromiso_activo boolean not null default false,
+  corte_activo boolean not null default false,
+  cierre_activo boolean not null default false,
+  updated_by uuid references public.usuarios(id) on delete set null,
+  updated_at timestamp with time zone not null default now(),
+  constraint habilitacion_etapas_fecha_jefe_unique unique (fecha, jefe_id)
+);
+
 create table public.registros_kpi (
   id uuid primary key default gen_random_uuid(),
   fecha date not null,
@@ -142,6 +155,7 @@ create index idx_kpis_jefe_orden on public.kpis(jefe_id, orden);
 create index idx_kpis_jefe_grupo_orden on public.kpis(jefe_id, grupo, orden);
 create index idx_kpis_jefe_visible_tabla on public.kpis(jefe_id, visible_tabla, activo, grupo, orden);
 create index idx_kpi_grupos_jefe_orden on public.kpi_grupos(jefe_id, activo, orden, nombre);
+create index idx_habilitacion_etapas_jefe_fecha on public.habilitacion_etapas(jefe_id, fecha desc);
 create index idx_registros_fecha on public.registros_kpi(fecha);
 create index idx_registros_vendedor_fecha on public.registros_kpi(vendedor_id, fecha);
 create index idx_registros_kpi_fecha on public.registros_kpi(kpi_id, fecha);
@@ -282,37 +296,96 @@ grant execute on function public.is_gerente() to authenticated;
 grant execute on function public.current_jefe_id() to authenticated;
 grant execute on function public.current_vendedor_id() to authenticated;
 
--- Validación de orden de etapas. Jefe y administrador pueden corregir.
+-- Validación de habilitación y orden de etapas. Supervisor y administrador pueden corregir.
 create or replace function public.enforce_stage_order()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_role text;
+  v_jefe_id uuid;
+  v_enabled boolean := false;
+  v_expected_kpis integer := 0;
+  v_previous_count integer := 0;
 begin
-  if public.current_user_role() in ('administrador', 'jefe') then
+  v_role := public.current_user_role();
+
+  if v_role in ('administrador', 'jefe') then
     return new;
   end if;
 
-  if public.current_user_role() = 'vendedor' then
-    if new.etapa = 'corte' and not exists (
-      select 1 from public.registros_kpi r
-      where r.fecha = new.fecha
-        and r.vendedor_id = new.vendedor_id
-        and r.kpi_id = new.kpi_id
-        and r.etapa = 'compromiso'
-    ) then
-      raise exception 'Primero debe registrar compromiso';
-    end if;
+  if v_role <> 'vendedor' then
+    raise exception 'El rol actual no puede registrar KPI';
+  end if;
 
-    if new.etapa = 'cierre' and not exists (
-      select 1 from public.registros_kpi r
-      where r.fecha = new.fecha
-        and r.vendedor_id = new.vendedor_id
-        and r.kpi_id = new.kpi_id
-        and r.etapa = 'corte'
-    ) then
-      raise exception 'Primero debe registrar corte';
+  select v.jefe_id
+  into v_jefe_id
+  from public.vendedores v
+  where v.id = new.vendedor_id
+    and v.usuario_id = auth.uid()
+    and v.activo = true
+  limit 1;
+
+  if v_jefe_id is null then
+    raise exception 'Vendedor no autorizado';
+  end if;
+
+  select case new.etapa
+    when 'compromiso' then h.compromiso_activo
+    when 'corte' then h.corte_activo
+    when 'cierre' then h.cierre_activo
+    else false
+  end
+  into v_enabled
+  from public.habilitacion_etapas h
+  where h.fecha = new.fecha
+    and h.jefe_id = v_jefe_id
+  limit 1;
+
+  if coalesce(v_enabled, false) = false then
+    raise exception 'La etapa % está deshabilitada por el supervisor', new.etapa;
+  end if;
+
+  select count(*)
+  into v_expected_kpis
+  from public.kpis k
+  where k.jefe_id = v_jefe_id
+    and k.activo = true
+    and k.visible_tabla = true;
+
+  if new.etapa = 'corte' then
+    select count(distinct r.kpi_id)
+    into v_previous_count
+    from public.registros_kpi r
+    join public.kpis k on k.id = r.kpi_id
+    where r.fecha = new.fecha
+      and r.vendedor_id = new.vendedor_id
+      and r.etapa = 'compromiso'
+      and k.jefe_id = v_jefe_id
+      and k.activo = true
+      and k.visible_tabla = true;
+
+    if v_previous_count < v_expected_kpis then
+      raise exception 'Primero debe completar compromiso';
+    end if;
+  end if;
+
+  if new.etapa = 'cierre' then
+    select count(distinct r.kpi_id)
+    into v_previous_count
+    from public.registros_kpi r
+    join public.kpis k on k.id = r.kpi_id
+    where r.fecha = new.fecha
+      and r.vendedor_id = new.vendedor_id
+      and r.etapa = 'corte'
+      and k.jefe_id = v_jefe_id
+      and k.activo = true
+      and k.visible_tabla = true;
+
+    if v_previous_count < v_expected_kpis then
+      raise exception 'Primero debe completar corte';
     end if;
   end if;
 
@@ -331,9 +404,11 @@ alter table public.gerentes enable row level security;
 alter table public.vendedores enable row level security;
 alter table public.kpis enable row level security;
 alter table public.kpi_grupos enable row level security;
+alter table public.habilitacion_etapas enable row level security;
 alter table public.registros_kpi enable row level security;
 
 grant select, insert, update, delete on public.gerentes to authenticated;
+grant select, insert, update on public.habilitacion_etapas to authenticated;
 
 -- Roles
 create policy "roles_select_authenticated"
@@ -521,6 +596,40 @@ on public.kpi_grupos
 for delete
 to authenticated
 using (public.is_administrador());
+
+-- Habilitación diaria de etapas
+create policy "habilitacion_etapas_select_scoped"
+on public.habilitacion_etapas
+for select
+to authenticated
+using (
+  public.is_administrador()
+  or public.is_gerente()
+  or jefe_id = public.current_jefe_id()
+  or (public.is_jefe() and jefe_id = auth.uid())
+);
+
+create policy "habilitacion_etapas_insert_editor"
+on public.habilitacion_etapas
+for insert
+to authenticated
+with check (
+  public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+);
+
+create policy "habilitacion_etapas_update_editor"
+on public.habilitacion_etapas
+for update
+to authenticated
+using (
+  public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+)
+with check (
+  public.is_administrador()
+  or (public.is_jefe() and jefe_id = auth.uid())
+);
 
 -- Registros
 create policy "registros_select_scoped"
@@ -894,4 +1003,5 @@ revoke execute on function public.setup_vendedor_demo(text,text,text,text,text) 
 
 
 comment on table public.gerentes is 'Registro operativo independiente de usuarios con rol gerente.';
+comment on table public.habilitacion_etapas is 'Control diario por supervisor para habilitar o bloquear compromiso, corte y cierre del vendedor.';
 comment on column public.kpis.visible_tabla is 'Controla si el KPI es visible para el vendedor, Tabla Excel, reportes y gráficos.';

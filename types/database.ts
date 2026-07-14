@@ -85,6 +85,18 @@ export type KpiGrupoRow = {
   jefe?: Pick<Usuario, "id" | "usuario" | "email" | "nombre" | "codigo_operativo"> | null;
 };
 
+
+export type HabilitacionEtapas = {
+  id: string;
+  fecha: string;
+  jefe_id: string;
+  compromiso_activo: boolean;
+  corte_activo: boolean;
+  cierre_activo: boolean;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 export type RegistroKpi = {
   id: string;
   fecha: string;

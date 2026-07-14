@@ -176,3 +176,18 @@ El foco principal fue reducir confusión en el registro de 21 KPI, corregir entr
 - Se añadieron títulos accesibles a las acciones para identificar el usuario afectado.
 - `npm run typecheck`: correcto.
 - `npm run build`: compilación y TypeScript correctos; el entorno de validación se interrumpió posteriormente en la generación de páginas con `EPIPE`.
+
+## 2026-07-14 — Reportes PNG, control de etapas y simplificación de paneles
+
+- La antigua opción Tabla Excel se convirtió en el módulo Reportes; las rutas `/admin/tabla` y `/admin/exportar` redirigen al nuevo módulo.
+- Para supervisor, Reportes conserva únicamente el filtro de fecha y toma todos sus vendedores/KPI visibles.
+- Se implementaron tres exportaciones PNG en Canvas, sin dependencia adicional: Compromiso; Compromiso + Corte 1:45; Compromiso + Cierre + Avance %.
+- El detalle permite corregir Compromiso, Corte y Cierre y descargar el Excel completo; gerente permanece en modo de solo lectura.
+- Dashboard conserva filtros Fecha/KPI, tarjetas, Avance por zona y Semáforo; se eliminó Vendedores con menor avance.
+- Avance conserva filtros Fecha/KPI e incluye los cinco bloques solicitados: Avance por vendedor, Ranking, Compromiso vs cierre, Mapa de calor y Tendencia por días.
+- Se añadió `public.habilitacion_etapas` para controlar por fecha y supervisor si Compromiso, Corte y Cierre están habilitados.
+- El panel vendedor muestra las tarjetas Enviado/Habilitado/Bloqueado, exige el orden Compromiso → Corte → Cierre y precarga los campos con cero.
+- El trigger `enforce_stage_order` valida en base de datos la habilitación, propiedad del vendedor y etapa previa completa; administrador/supervisor mantienen la capacidad de corrección desde el detalle.
+- Migración incremental: `sql/2026-07-14-habilitacion-etapas-y-reportes-png.sql`.
+- `npm run typecheck`: correcto.
+- `npm run build`: correcto, incluida la generación de rutas. Persiste únicamente la advertencia no bloqueante de Supabase en middleware Edge.

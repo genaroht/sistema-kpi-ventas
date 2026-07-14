@@ -2,10 +2,10 @@
 
 Aplicación web para registrar, supervisar y exportar KPI de ventas por roles:
 
-- **Administrador**: gestión completa de usuarios, vendedores, KPI, reportes y exportación.
-- **Gerente**: vista ejecutiva de solo lectura. Puede consultar dashboard, tabla, avance y reportes de todos los supervisores, sin permisos para crear, editar o eliminar información.
+- **Administrador**: gestión completa de usuarios, supervisores, vendedores, KPI, reportes y habilitación diaria de etapas.
+- **Gerente**: vista ejecutiva global de solo lectura, organizada por supervisor. Puede consultar Dashboard, Reportes y Avance %, sin permisos de edición.
 - **Supervisor**: seguimiento de vendedores y KPI bajo su alcance según RLS. El código interno en base de datos se mantiene como `jefe` para no romper RLS ni funciones existentes. Cada supervisor puede tener su propio código operativo, por ejemplo `L7`.
-- **Vendedor**: registro diario de compromiso, corte y cierre.
+- **Vendedor**: registro diario de compromiso, corte y cierre, únicamente cuando la etapa está habilitada y respetando el orden operativo.
 
 Stack principal:
 
@@ -41,36 +41,34 @@ Stack principal:
 - Prevención de doble envío y bloqueo mientras guarda.
 - Registros ya enviados quedan bloqueados.
 
-### Dashboard administrativo/supervisor
+### Dashboard administrativo/supervisor/gerente
 
-- Tarjetas semaforizadas y clicables.
-- Badge de alerta para compromiso pendiente.
-- Comparación contra el día anterior cuando hay datos.
-- Avance por zona con barras horizontales.
-- Semáforo del día por vendedor.
-- Gráfico de vendedores con menor avance.
+- Solo conserva los filtros **Fecha** y **KPI**.
+- Mantiene las tarjetas operativas existentes.
+- Conserva únicamente **Avance de cumplimiento por zona** y **Semáforo del día**.
+- El administrador y supervisor pueden habilitar o bloquear Compromiso, Corte 1:45 y Cierre para la fecha seleccionada.
+- El gerente consulta la información global, identificada por supervisor, en modo de solo lectura.
 - Estados de carga, error y vacío.
 
-### Tabla tipo Excel
+### Reportes (antes Tabla Excel)
 
-- Solucionado bug de `defaultValue`: ahora los inputs son controlados y sincronizados con fecha/registros.
-- Modo **Resumen** para ver solo % avance.
-- Modo **Detalle editable** para que administrador y supervisor corrijan compromiso, corte y cierre.
-- Botón **Guardar cambios** para confirmar las ediciones pendientes.
-- Fila **Total** por KPI y etapa: compromiso, corte y cierre.
-- Columnas Zona/Vendedor y header sticky.
-- Búsqueda rápida por vendedor.
-- Filtro por grupo KPI.
-- Solo aparecen vendedores y KPI marcados como **Mostrar en Tabla Excel** desde las vistas Vendedores y KPI.
-- Las celdas sin registro se inicializan visualmente con `0`; solo se guardan cuando el usuario modifica y confirma cambios.
-- Exportación Excel desde tabla respetando filtros visibles e incluyendo totales.
+- La opción **Tabla Excel** pasó a llamarse **Reportes**.
+- Para supervisor, el único filtro es **Fecha**; se incluyen automáticamente todos sus vendedores y KPI visibles.
+- Tres descargas PNG independientes:
+  - **Descargar Compromiso**: solo compromiso.
+  - **Descargar Corte 1:45**: compromiso y corte.
+  - **Descargar Cierre**: compromiso, cierre y avance %.
+- Modo **Detalle editable** para administrador y supervisor con Compromiso, Corte, Cierre y Avance %.
+- Botón **Guardar cambios** para confirmar ediciones y descarga del Excel completo.
+- El gerente consulta por supervisor en modo de solo lectura.
+- Columnas Zona/Vendedor, encabezados y fila de totales permanecen fijos durante el desplazamiento.
+- Las celdas sin registro se inicializan visualmente con `0`.
 
-### Reportes y exportación
+### Avance % y navegación
 
-- Filtros por grupo KPI, incluyendo grupos personalizados.
-- Al cambiar fechas se muestra aviso para presionar **Consultar**.
-- Excel respeta filtros aplicados y solo incluye KPI/vendedores visibles.
-- Estados de loading, vacío y error.
+- Solo conserva filtros **Fecha** y **KPI**.
+- Incluye: Avance por vendedor, Ranking de vendedores, Compromiso vs cierre, Mapa de calor KPI x vendedor y Tendencia por días.
+- Se eliminaron las vistas independientes antiguas de Reportes y Exportar; sus rutas redirigen al nuevo módulo **Reportes**.
 
 ### Seguridad
 
@@ -122,7 +120,8 @@ npm run build
 En esta entrega se validó:
 
 - `npm run typecheck`: correcto.
-- `npm run build`: compiló correctamente y pasó TypeScript/lint; en el sandbox agotó tiempo durante `Collecting page data`. Repetir en entorno local limpio tras `npm install` para validar el empaquetado completo.
+- `npm run build`: correcto; compilación de producción, validación de tipos y generación de rutas completadas.
+- Next.js mantiene una advertencia no bloqueante de Supabase en middleware Edge sobre `process.version`.
 
 ## Pruebas manuales obligatorias
 
@@ -134,18 +133,18 @@ En esta entrega se validó:
 6. Acceso de admin/supervisor a `/vendedor`: debe redirigir a panel admin.
 7. Rol administrador: usuarios, vendedores, KPI, tabla, reportes y exportación.
 8. Rol Supervisor: solo datos dentro de su alcance RLS. Validar que su código operativo se muestre junto al nombre si está configurado.
-9. Rol Gerente: solo Dashboard, Tabla Excel, Avance y Reportes; debe poder filtrar por supervisor y no debe ver acciones de edición.
+9. Rol Gerente: solo Dashboard, Reportes y Avance; debe ver información global identificada por supervisor y no debe ver acciones de edición.
 10. Rol vendedor: solo su propio registro del día.
 11. Vista vendedor en celular: acordeones, progreso sticky y botón fijo.
 12. Confirmar que los KPI pendientes aparezcan precargados en `0`.
 13. Registrar cero real: debe aceptar `0`.
 14. Intentar número negativo: debe bloquearlo.
-15. Tabla Excel: cambiar fecha y confirmar que valores no quedan desactualizados.
-16. Tabla Excel: alternar Resumen/Detalle para administrador y supervisor.
-17. Tabla Excel como gerente: no debe mostrar Detalle editable ni Guardar cambios.
-18. Reportes: cambiar fechas, seleccionar supervisor y presionar Consultar.
+15. Reportes: cambiar fecha y confirmar que los valores no quedan desactualizados.
+16. Reportes: comprobar las tres descargas PNG y alternar Resumen/Detalle para administrador y supervisor.
+17. Reportes como gerente: el detalle debe ser de solo lectura y no debe mostrar Guardar cambios.
+18. Supervisor: verificar que en Reportes solo exista el filtro Fecha.
 19. Confirmar que Cierre del día y Alcance % coincidan con los datos filtrados.
-20. Exportación Excel con filtros aplicados.
+20. Descargar el Excel completo desde Detalle y validar Compromiso, Corte, Cierre y Avance %.
 21. Gráficos sin datos: deben mostrar estado vacío o no fallar.
 
 ## Actualización v4
@@ -181,6 +180,9 @@ sql/2026-07-09-kpi-grupos-supervisor.sql
 sql/2026-07-09-supervisor-codigo-y-vendedores-visibles.sql
 sql/2026-07-09-kpi-visibles-y-grupos-dinamicos.sql
 sql/2026-07-10-email-interno-kpibackus.sql  # opcional si tienes emails antiguos
+sql/2026-07-12-gerente-supervisores-y-reportes.sql
+sql/2026-07-13-gerentes-visibilidad-kpi-vendedores.sql
+sql/2026-07-14-habilitacion-etapas-y-reportes-png.sql
 ```
 
 Resumen del cambio:
@@ -209,7 +211,6 @@ El código interno del rol sigue siendo `jefe` para mantener compatibilidad con 
 - `app/vendedor/page.tsx`
 - `components/auth/login-form.tsx`
 - `components/admin/dashboard/admin-dashboard.tsx`
-- `components/admin/reportes/reportes-client.tsx`
 - `components/admin/tabla/tabla-excel.tsx`
 - `components/vendedor/vendedor-dia.tsx`
 - `components/vendedor/vendedor-loader.tsx`

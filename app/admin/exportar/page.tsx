@@ -1,16 +1,5 @@
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
-import { PageTitle } from "@/components/admin/page-title";
-import { ReportesClient } from "@/components/admin/reportes/reportes-client";
-import { requireEditorAccess } from "@/lib/auth";
-
-export default async function ExportarPage() {
-  await requireEditorAccess();
-
-  return (
-    <>
-      <PageTitle title="Exportar Excel" description="Descarga el archivo con Vista Matriz, Data Base y Avance %." />
-      <ReportesClient mode="exportar" />
-    </>
-  );
+export default function ExportarPage() {
+  redirect("/admin/reportes");
 }

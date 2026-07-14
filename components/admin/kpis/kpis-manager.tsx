@@ -304,7 +304,7 @@ export function KpisManager() {
             </h2>
             <p className="mt-1 text-xs font-semibold text-slate-500">
               Organiza los KPI por grupos y decide cuáles puede registrar el
-              vendedor y cuáles aparecen en Tabla Excel, reportes y gráficos.
+              vendedor y cuáles aparecen en Reportes, reportes y gráficos.
             </p>
           </div>
           {currentRole === "administrador" ? (
@@ -441,7 +441,7 @@ export function KpisManager() {
                 setForm({ ...form, visible_tabla: e.target.checked })
               }
             />{" "}
-            Visible para vendedor, Tabla Excel, reportes y gráficos
+            Visible para vendedor, Reportes, reportes y gráficos
           </label>
           <label className="flex items-center gap-2 text-sm font-semibold">
             <input
@@ -563,7 +563,7 @@ export function KpisManager() {
                   <th className="p-3 text-left">Orden</th>
                   <th className="p-3 text-left">KPI</th>
                   <th className="p-3 text-left">Tipo</th>
-                  <th className="p-3 text-left">Tabla Excel</th>
+                  <th className="p-3 text-left">Reportes</th>
                   <th className="p-3 text-left">Estado</th>
                   <th className="p-3 text-right">Acciones</th>
                 </tr>
