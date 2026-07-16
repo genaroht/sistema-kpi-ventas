@@ -281,22 +281,84 @@ export function AvanceDashboard() {
     [hasSpecificKpi, rows],
   );
 
+  const heatmapRowMap = useMemo(
+    () =>
+      new Map(
+        rows.map((row) => [`${row.vendedor_id}:${row.kpi_id}`, row] as const),
+      ),
+    [rows],
+  );
+
   const heatmapGroups = useMemo(
     () =>
       supervisores
-        .map((supervisor) => ({
-          supervisor,
-          vendedores: filteredVendedores.filter(
-            (vendedor) => vendedor.jefe_id === supervisor.usuario_id,
-          ),
-          kpis: filteredKpis.filter(
+        .map((supervisor) => {
+          const teamKpis = filteredKpis.filter(
             (kpi) => kpi.jefe_id === supervisor.usuario_id,
-          ),
-        }))
+          );
+          const teamVendedores = filteredVendedores
+            .filter(
+              (vendedor) => vendedor.jefe_id === supervisor.usuario_id,
+            )
+            .map((vendedor) => {
+              const avances = teamKpis
+                .map((kpi) =>
+                  heatmapRowMap.get(`${vendedor.id}:${kpi.id}`),
+                )
+                .filter(
+                  (row): row is AvanceRow =>
+                    Boolean(
+                      row &&
+                        row.compromiso > 0 &&
+                        row.avance !== null &&
+                        Number.isFinite(row.avance),
+                    ),
+                )
+                .map((row) => row.avance as number);
+
+              return {
+                vendedor,
+                promedio:
+                  avances.length > 0
+                    ? avances.reduce((total, avance) => total + avance, 0) /
+                      avances.length
+                    : null,
+              };
+            });
+
+          if (!hasSpecificKpi) {
+            teamVendedores.sort((a, b) => {
+              if (a.promedio === null && b.promedio === null) {
+                return a.vendedor.nombre.localeCompare(
+                  b.vendedor.nombre,
+                  "es",
+                );
+              }
+              if (a.promedio === null) return 1;
+              if (b.promedio === null) return -1;
+              return (
+                b.promedio - a.promedio ||
+                a.vendedor.nombre.localeCompare(b.vendedor.nombre, "es")
+              );
+            });
+          }
+
+          return {
+            supervisor,
+            vendedores: teamVendedores,
+            kpis: teamKpis,
+          };
+        })
         .filter(
           (group) => group.vendedores.length > 0 && group.kpis.length > 0,
         ),
-    [filteredKpis, filteredVendedores, supervisores],
+    [
+      filteredKpis,
+      filteredVendedores,
+      hasSpecificKpi,
+      heatmapRowMap,
+      supervisores,
+    ],
   );
 
   const trendRows = useMemo(() => {
@@ -528,57 +590,108 @@ export function AvanceDashboard() {
         ) : (
           <div className="space-y-5">
             {heatmapGroups.map(
-              ({ supervisor, vendedores: teamVendedores, kpis: teamKpis }) => (
-                <section
-                  key={supervisor.usuario_id}
-                  className="overflow-hidden rounded-2xl border"
-                >
-                  <div className="bg-slate-100 px-4 py-3 font-black text-slate-800">
-                    {supervisor.codigo_operativo} · {supervisor.nombre}
-                  </div>
-                  <div className="kpi-scrollbar overflow-auto">
-                    <table className="min-w-max border-separate border-spacing-0 text-xs">
-                      <thead>
-                        <tr>
-                          <th className="sticky left-0 z-10 bg-white p-2 text-left">
-                            Vendedor
-                          </th>
-                          {teamKpis.map((kpi) => (
-                            <th key={kpi.id} className="p-2 text-left">
-                              {kpi.nombre}
+              ({ supervisor, vendedores: teamVendedores, kpis: teamKpis }) => {
+                const showAverageColumn = !hasSpecificKpi;
+                const lowestRowsStart = showAverageColumn
+                  ? Math.max(teamVendedores.length - 4, 0)
+                  : teamVendedores.length;
+
+                return (
+                  <section
+                    key={supervisor.usuario_id}
+                    className="overflow-hidden rounded-2xl border"
+                  >
+                    <div className="bg-slate-100 px-4 py-3 font-black text-slate-800">
+                      {supervisor.codigo_operativo} · {supervisor.nombre}
+                    </div>
+                    <div className="kpi-scrollbar overflow-auto">
+                      <table className="min-w-max border-separate border-spacing-0 text-xs">
+                        <thead>
+                          <tr>
+                            <th className="sticky left-0 z-10 bg-white p-2 text-left">
+                              Vendedor
                             </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {teamVendedores.map((vendedor) => (
-                          <tr key={vendedor.id}>
-                            <td className="sticky left-0 z-10 border-t bg-white p-2 font-bold">
-                              {vendedor.nombre}
-                            </td>
-                            {teamKpis.map((kpi) => {
-                              const value = rows.find(
-                                (row) =>
-                                  row.vendedor_id === vendedor.id &&
-                                  row.kpi_id === kpi.id,
-                              )?.avance;
-                              return (
-                                <td key={kpi.id} className="border-t p-2">
-                                  <span
-                                    className={`block rounded-lg border px-2 py-1 text-center font-black ${advanceTone(value)}`}
-                                  >
-                                    {value == null ? "SC" : Math.round(value)}
-                                  </span>
-                                </td>
-                              );
-                            })}
+                            {teamKpis.map((kpi) => (
+                              <th key={kpi.id} className="p-2 text-left">
+                                {kpi.nombre}
+                              </th>
+                            ))}
+                            {showAverageColumn ? (
+                              <th className="border-l-2 border-blue-900 bg-blue-900 p-2 text-left text-white">
+                                Promedio avance %
+                              </th>
+                            ) : null}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              ),
+                        </thead>
+                        <tbody>
+                          {teamVendedores.map(
+                            ({ vendedor, promedio }, index) => {
+                              const isLowestRow =
+                                showAverageColumn && index >= lowestRowsStart;
+                              const rowBackground = isLowestRow
+                                ? "bg-red-200"
+                                : "bg-white";
+                              const averageColumnBackground = isLowestRow
+                                ? "bg-red-200"
+                                : "bg-blue-50";
+
+                              return (
+                                <tr
+                                  key={vendedor.id}
+                                  className={rowBackground}
+                                >
+                                  <td
+                                    className={`sticky left-0 z-10 border-t p-2 font-bold ${rowBackground}`}
+                                  >
+                                    {vendedor.nombre}
+                                  </td>
+                                  {teamKpis.map((kpi) => {
+                                    const avanceRow = heatmapRowMap.get(
+                                      `${vendedor.id}:${kpi.id}`,
+                                    );
+                                    const value =
+                                      avanceRow && avanceRow.compromiso > 0
+                                        ? avanceRow.avance
+                                        : null;
+
+                                    return (
+                                      <td
+                                        key={kpi.id}
+                                        className={`border-t p-2 ${rowBackground}`}
+                                      >
+                                        <span
+                                          className={`block rounded-lg border px-2 py-1 text-center font-black ${advanceTone(value)}`}
+                                        >
+                                          {value == null
+                                            ? "SC"
+                                            : Math.round(value)}
+                                        </span>
+                                      </td>
+                                    );
+                                  })}
+                                  {showAverageColumn ? (
+                                    <td
+                                      className={`border-l-2 border-blue-900 border-t p-2 ${averageColumnBackground}`}
+                                    >
+                                      <span
+                                        className={`block rounded-lg border px-2 py-1 text-center font-black ${advanceTone(promedio)}`}
+                                      >
+                                        {promedio == null
+                                          ? "SC"
+                                          : Math.round(promedio)}
+                                      </span>
+                                    </td>
+                                  ) : null}
+                                </tr>
+                              );
+                            },
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                );
+              },
             )}
           </div>
         )}
